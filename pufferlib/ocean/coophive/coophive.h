@@ -2,9 +2,13 @@
 #include <string.h>
 #include "raylib.h"
 
-#define EPISODE_LENGTH 1000
+#define EPISODE_LENGTH 100
 #define NUM_JOBS 100
 #define MAX_JOB_DURATION 100
+#define ENERGY_GEN 100
+#define ENERGY_STORAGE 100
+#define MAX_NODES 100
+#define MAX_SPACE_TB 100
 
 typedef struct {
     float score;
@@ -12,8 +16,15 @@ typedef struct {
 } Log;
 
 typedef struct {
+    int nodes;
+    int space_tb;
+    int start;
+    int duration;
+} Job;
+
+typedef struct {
     Log log;
-    unsigned char* observations;
+    float* observations;
     float * actions;
     float* rewards;
     unsigned char* terminals;
@@ -30,29 +41,37 @@ typedef struct {
     Job jobs[NUM_JOBS];
 } CoopHive;
 
-typedef struct {
-    int nodes;
-    int space_tb;
-    int start;
-    int duration;
-} Job;
-
 Job generate_request(CoopHive* env) {
-    return {
-        .nodes = rand() % env->free_nodes,
-        .space_tb = rand() % env->free_space_tb,
+    if (env->free_nodes == 0) {
+        return (Job){0};
+    }
+    if (env->free_space_tb == 0) {
+        return (Job){0};
+    }
+    return (Job) {
+        .nodes = rand()%env->free_nodes + 1,
+        .space_tb = rand()%env->free_space_tb + 1,
         .start = env->tick,
-        .duration = rand() % MAX_JOB_DURATION
+        .duration = rand()%MAX_JOB_DURATION + 1
     };
+}
+
+bool job_is_valid(Job job) {
+    return job.nodes > 0 && job.space_tb > 0;
 }
 
 void c_reset(CoopHive* env) {
     env->tick = 0;
-    env->profit = 0;
+    env->nodes = rand()%MAX_NODES + 1;
+    env->free_nodes = env->nodes;
+    env->space_tb = rand()%MAX_SPACE_TB + 1;
+    env->free_space_tb = env->space_tb;
     env->energy = 0;
     env->energy_gen = ENERGY_GEN;
-    env->request = generate_request(env);
+    env->energy_storage = ENERGY_STORAGE;
+    env->profit = 0;
     memset(env->jobs, 0, NUM_JOBS*sizeof(Job));
+    env->request = generate_request(env);
 }
 
 int accept_job(CoopHive* env) {
@@ -69,6 +88,29 @@ int accept_job(CoopHive* env) {
     return 1;
 }
 
+bool buyer_accepts(Job request, float offer_price) {
+    return offer_price > 0;
+}
+
+float energy_price() {
+    return 0;
+}
+
+void compute_observations(CoopHive* env) {
+    int i = 0;
+    env->observations[i++] = env->nodes;
+    env->observations[i++] = env->free_nodes;
+    env->observations[i++] = env->space_tb;
+    env->observations[i++] = env->free_space_tb;
+    env->observations[i++] = env->energy;
+    env->observations[i++] = env->energy_gen;
+    env->observations[i++] = env->energy_storage;
+    env->observations[i++] = env->profit;
+    env->observations[i++] = env->request.nodes;
+    env->observations[i++] = env->request.space_tb;
+    env->observations[i++] = env->request.duration;
+}
+
 void c_step(CoopHive* env) {
     env->rewards[0] = 0;
     env->terminals[0] = 0;
@@ -80,8 +122,18 @@ void c_step(CoopHive* env) {
     }
     env->tick++;
 
+    for (int i=0; i<NUM_JOBS; i++) {
+        Job job = env->jobs[i];
+        if (job.start + job.duration >= env->tick) {
+            env->free_nodes += job.nodes;
+            env->free_space_tb += job.space_tb;
+            memset(&env->jobs[i], 0, sizeof(Job));
+        }
+    }
+
     float offer_price = env->actions[0];
-    if (buyer_accepts(env->request, offer_price)) {
+    if (job_is_valid(env->request)
+            && buyer_accepts(env->request, offer_price)) {
         int err = accept_job(env);
         if (!err) {
             env->profit += offer_price;
@@ -90,7 +142,6 @@ void c_step(CoopHive* env) {
 
     bool sell_energy = env->actions[1] > 0;
     if (sell_energy) {
-        // Sell at current market price
     }
 
     compute_observations(env);
@@ -112,10 +163,6 @@ void c_render(CoopHive* env) {
     if (IsKeyDown(KEY_ESCAPE)) {
         exit(0);
     }
-
-    DrawText("Go to the red square!", 20, 20, 20, PUFF_WHITE);
-    DrawRectangle(540 - 32 + 64*env->goal, 360 - 32, 64, 64, PUFF_RED);
-    DrawRectangle(540 - 32 + 64*env->x, 360 - 32, 64, 64, PUFF_CYAN);
 
     BeginDrawing();
     ClearBackground(PUFF_BACKGROUND);

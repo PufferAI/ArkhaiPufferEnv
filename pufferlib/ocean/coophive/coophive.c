@@ -1,29 +1,31 @@
 #include "coophive.h"
 
 int main() {
-    CoopHive env = {.size = 5};
-    env.observations = (unsigned char*)calloc(1, sizeof(unsigned char));
-    env.actions = (int*)calloc(1, sizeof(int));
+    CoopHive env = {0};
+    env.observations = (float*)calloc(11, sizeof(float));
+    env.actions = (float*)calloc(2, sizeof(float));
     env.rewards = (float*)calloc(1, sizeof(float));
     env.terminals = (unsigned char*)calloc(1, sizeof(unsigned char));
 
     c_reset(&env);
-    c_render(&env);
+    //c_render(&env);
+    /*
     while (!WindowShouldClose()) {
-        if (IsKeyDown(KEY_LEFT_SHIFT)) {
-            if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) {
-                env.actions[0] = 0;
-            } else if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) {
-                env.actions[0] = 1;
-            } else {
-                env.actions[0] = -1;
-            }
-        } else {
-            env.actions[0] = rand() % 2;
-        }
+        env.actions[0] = 2.0f*((float)rand()/(float)(RAND_MAX)) - 1.0f;
+        env.actions[1] = 2.0f*((float)rand()/(float)(RAND_MAX)) - 1.0f;
         c_step(&env);
-        c_render(&env);
+        //c_render(&env);
     }
+    */
+    for (int i=0; i<10000000; i++) {
+        env.actions[0] = 2.0f*((float)rand()/(float)(RAND_MAX)) - 1.0f;
+        env.actions[1] = 2.0f*((float)rand()/(float)(RAND_MAX)) - 1.0f;
+        c_step(&env);
+        if (env.terminals[0]) {
+            c_reset(&env);
+        }
+    }
+ 
     free(env.observations);
     free(env.actions);
     free(env.rewards);
