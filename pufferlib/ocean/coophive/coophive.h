@@ -1,5 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stdio.h>
 #include "raylib.h"
 
 #define EPISODE_LENGTH 100
@@ -10,8 +12,18 @@
 #define MAX_NODES 100
 #define MAX_SPACE_TB 100
 
+#define SPACE_TB_PRICE 0.03f
+#define NODE_PRICE 5.31f // A100 8x Node price
+#define NODE_ENERGY_KW 6.5f
+#define BUY_PRICE_RANDOMIZATION 0.1
+
+#define ENERGY_USAGE_RANOMIZATION 0.5
+
 typedef struct {
     float score;
+    float revenue;
+    float profit;
+    float energy_expense;
     float n;
 } Log;
 
@@ -36,7 +48,9 @@ typedef struct {
     float energy;
     float energy_gen;
     float energy_storage;
+    float revenue;
     float profit;
+    float energy_expense;
     Job request;
     Job jobs[NUM_JOBS];
 } CoopHive;
@@ -69,7 +83,9 @@ void c_reset(CoopHive* env) {
     env->energy = 0;
     env->energy_gen = ENERGY_GEN;
     env->energy_storage = ENERGY_STORAGE;
+    env->revenue = 0;
     env->profit = 0;
+    env->energy_expense = 0;
     memset(env->jobs, 0, NUM_JOBS*sizeof(Job));
     env->request = generate_request(env);
 }
@@ -88,27 +104,42 @@ int accept_job(CoopHive* env) {
     return 1;
 }
 
-bool buyer_accepts(Job request, float offer_price) {
-    return offer_price > 0;
+float randf(float min, float max) {
+    return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
 }
 
-float energy_price() {
-    return 0;
+bool buyer_accepts(Job request, float offer_price) {
+    if (offer_price < 0) {
+        return false;
+    }
+    float rng = 1.0f + randf(-BUY_PRICE_RANDOMIZATION, BUY_PRICE_RANDOMIZATION);
+    float worth = rng*(
+        NODE_PRICE*request.nodes
+        + SPACE_TB_PRICE*request.space_tb
+    );
+    return offer_price <= worth;
+}
+
+float energy_price(float t) {
+    return 0.15 + 0.05 * sin(2 * M_PI * t / 24);
+}
+
+float job_energy_cost(float t, float T) {
+    return T * (0.15 + 0.05 * sin(2 * M_PI * t / 24));
 }
 
 void compute_observations(CoopHive* env) {
     int i = 0;
-    env->observations[i++] = env->nodes;
-    env->observations[i++] = env->free_nodes;
-    env->observations[i++] = env->space_tb;
-    env->observations[i++] = env->free_space_tb;
-    env->observations[i++] = env->energy;
-    env->observations[i++] = env->energy_gen;
-    env->observations[i++] = env->energy_storage;
-    env->observations[i++] = env->profit;
-    env->observations[i++] = env->request.nodes;
-    env->observations[i++] = env->request.space_tb;
-    env->observations[i++] = env->request.duration;
+    env->observations[i++] = env->nodes / (float)MAX_NODES;
+    env->observations[i++] = env->free_nodes / (float)MAX_NODES;
+    env->observations[i++] = env->space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->free_space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->energy / (float)ENERGY_STORAGE;
+    env->observations[i++] = env->energy_gen / (float)ENERGY_GEN;
+    env->observations[i++] = env->energy_storage / (float)ENERGY_STORAGE;
+    env->observations[i++] = env->request.nodes / (float)MAX_NODES;
+    env->observations[i++] = env->request.space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->request.duration / (float)MAX_JOB_DURATION;
 }
 
 void c_step(CoopHive* env) {
@@ -116,7 +147,10 @@ void c_step(CoopHive* env) {
     env->terminals[0] = 0;
 
     if (env->tick >= EPISODE_LENGTH) {
-        env->log.score = env->profit;
+        env->log.score += env->profit;
+        env->log.profit += env->profit;
+        env->log.energy_expense += env->energy_expense;
+        env->log.revenue += env->revenue;
         env->log.n++;
         c_reset(env);
     }
@@ -131,12 +165,17 @@ void c_step(CoopHive* env) {
         }
     }
 
-    float offer_price = env->actions[0];
+    float base_price = NODE_PRICE*env->request.nodes + SPACE_TB_PRICE*env->request.space_tb;
+    float offer_price = base_price * env->actions[0];
     if (job_is_valid(env->request)
             && buyer_accepts(env->request, offer_price)) {
         int err = accept_job(env);
         if (!err) {
-            env->profit += offer_price;
+            float energy_cost = NODE_ENERGY_KW*env->request.nodes*job_energy_cost(env->tick, env->request.duration);
+            //printf("energy_cost: %f for %d nodes for %d hours\n", energy_cost, env->request.nodes, env->request.duration);
+            env->profit += offer_price - energy_cost;
+            env->revenue += offer_price;
+            env->energy_expense += energy_cost;
         }
     } 
 
