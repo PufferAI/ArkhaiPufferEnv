@@ -11,11 +11,13 @@
 #define ENERGY_GEN 10
 #define ENERGY_STORAGE 100
 
-#define MAX_NODES 1000
-#define MAX_SPACE_TB 1000
+#define MAX_NODES 100
+#define MAX_SPACE_TB 100
 
 #define BUY_PRICE_RANDOMIZATION 0.2
-#define JOB_EFFICIENCY 0.8
+#define JOB_EFFICIENCY_RANDOMIZATION 0.2
+
+#define REWARD_SCALE 0.001
 
 #define SPACE_TB_PRICE 0.03f
 
@@ -164,7 +166,8 @@ float job_kw(Job job) {
     for (int i=0; i<NODE_TYPES; i++) {
         kw += job.nodes[i]*NODE_ENERGY_KW[i];
     }
-    return JOB_EFFICIENCY*kw;
+    float efficiency = 1.0f + randf(-JOB_EFFICIENCY_RANDOMIZATION, JOB_EFFICIENCY_RANDOMIZATION);
+    return efficiency*kw;
 }
  
 bool buyer_accepts(Job request, float offer_price) {
@@ -197,6 +200,15 @@ void compute_observations(CoopHive* env) {
     env->observations[i++] = env->request.space_tb / (float)MAX_SPACE_TB;
     env->observations[i++] = env->request.duration / (float)MAX_JOB_DURATION;
     env->observations[i++] = env->prev_reward;
+
+    /*
+    for (int j=0; j<14; j++) {
+        if (env->observations[j] > 1.0f || env->observations[j] < -1.0f) {
+            printf("ERROR: observation %d out of range: %f\n", j, env->observations[j]);
+            exit(1);
+        }
+    }
+    */
 }
 
 void clear_finished_jobs(CoopHive* env) {
@@ -243,14 +255,6 @@ void update_jobs(CoopHive* env) {
         reward += profit;
     }
     
-    // Clip reward
-    if (reward > 1.0f) {
-        reward = 1.0f;
-    }
-    if (reward < -1.0f) {
-        reward = -1.0f;
-    }
-    env->episode_return += reward;
     env->rewards[0] += reward;
 } 
 
@@ -276,10 +280,10 @@ void c_step(CoopHive* env) {
 
     env->energy += ENERGY_GEN;
     if (env->energy > ENERGY_STORAGE) {
-        // Extra is sold at current price
         float diff = env->energy - ENERGY_STORAGE;
         env->energy = ENERGY_STORAGE;
         float profit = diff*kw_price(env->tick);
+        env->rewards[0] += REWARD_SCALE * profit;
         env->energy_revenue += profit;
         env->profit += profit;
     }
@@ -301,6 +305,18 @@ void c_step(CoopHive* env) {
         env->profit += profit;
         env->energy -= amt;
     }
+
+    // Scale and clip rewards
+    float reward = env->rewards[0];
+    reward *= REWARD_SCALE;
+    if (reward > 1.0f) {
+        reward = 1.0f;
+    }
+    if (reward < -1.0f) {
+        reward = -1.0f;
+    }
+    env->rewards[0] = reward;
+    env->episode_return += reward;
 
     compute_observations(env);
     env->request = generate_request(env);

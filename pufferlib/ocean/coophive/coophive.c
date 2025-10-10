@@ -18,7 +18,7 @@ int main() {
     }
     */
     for (int i=0; i<1000000; i++) {
-        env.actions[0] = 1.1f;
+        env.actions[0] = 1.0f;
         env.actions[1] = 0.0f;
         c_step(&env);
         if (env.terminals[0]) {
