@@ -2,8 +2,8 @@
 
 int main() {
     CoopHive env = {0};
-    env.observations = (float*)calloc(15, sizeof(float));
-    env.actions = (float*)calloc(2, sizeof(float));
+    env.observations = (float*)calloc(14, sizeof(float));
+    env.actions = (int*)calloc(2, sizeof(int));
     env.rewards = (float*)calloc(1, sizeof(float));
     env.terminals = (unsigned char*)calloc(1, sizeof(unsigned char));
 
@@ -17,9 +17,14 @@ int main() {
         //c_render(&env);
     }
     */
-    for (int i=0; i<1000000; i++) {
-        env.actions[0] = 1.0f;
-        env.actions[1] = 0.0f;
+    for (int i=0; i<10000000; i++) {
+        if (env.request.duration > 20) {
+            env.actions[0] = 9;
+            env.actions[1] = 0;
+        } else {
+            env.actions[0] = 3;
+            env.actions[1] = 0;
+        }
         c_step(&env);
         if (env.terminals[0]) {
             c_reset(&env);

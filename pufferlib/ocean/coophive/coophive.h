@@ -17,7 +17,7 @@
 #define BUY_PRICE_RANDOMIZATION 0.2
 #define JOB_EFFICIENCY_RANDOMIZATION 0.2
 
-#define REWARD_SCALE 0.001
+#define REWARD_SCALE 0.0001
 
 #define SPACE_TB_PRICE 0.03f
 
@@ -27,9 +27,7 @@ float randf(float min, float max) {
 
 typedef struct {
     int price;
-    int energy;
-} NodeSpec;
-
+    int energy; } NodeSpec;
 #define NODE_TYPES 2
 const int A100 = 0;
 const int H100 = 1;
@@ -71,7 +69,7 @@ typedef struct {
 typedef struct {
     Log log;
     float* observations;
-    float * actions;
+    int* actions;
     float* rewards;
     unsigned char* terminals;
     int tick;
@@ -116,6 +114,35 @@ bool job_is_valid(Job job) {
     return job.nodes > 0 && job.space_tb > 0;
 }
 
+void compute_observations(CoopHive* env) {
+    int i = 0;
+    for (int j=0; j<NODE_TYPES; j++) {
+        env->observations[i++] = env->nodes[j].total / (float)MAX_NODES;
+        env->observations[i++] = env->nodes[j].free / (float)MAX_NODES;
+    }
+    env->observations[i++] = env->space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->free_space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->energy / (float)ENERGY_STORAGE;
+    env->observations[i++] = env->energy_gen / (float)ENERGY_GEN;
+    env->observations[i++] = env->energy_storage / (float)ENERGY_STORAGE;
+    for (int j=0; j<NODE_TYPES; j++) {
+        env->observations[i++] = env->request.nodes[j] / (float)MAX_NODES;
+    }
+    env->observations[i++] = env->request.space_tb / (float)MAX_SPACE_TB;
+    env->observations[i++] = env->request.duration / (float)MAX_JOB_DURATION;
+    env->observations[i++] = env->prev_reward;
+    
+
+    /*
+    for (int j=0; j<14; j++) {
+        if (env->observations[j] > 1.0f || env->observations[j] < -1.0f) {
+            printf("ERROR: observation %d out of range: %f\n", j, env->observations[j]);
+            exit(1);
+        }
+    }
+    */
+}
+
 void c_reset(CoopHive* env) {
     env->tick = 0;
     for (int i=0; i<NODE_TYPES; i++) {
@@ -135,6 +162,7 @@ void c_reset(CoopHive* env) {
     env->episode_return = 0;
     memset(env->jobs, 0, MAX_JOBS*sizeof(Job));
     env->request = generate_request(env);
+    compute_observations(env);
 }
 
 int try_accept_job(CoopHive* env) {
@@ -181,34 +209,6 @@ float kw_price(float t) {
 
 float avg_kw_price(float t, float T) {
     return T * (0.15 + 0.05 * sin(2 * M_PI * t / 24));
-}
-
-void compute_observations(CoopHive* env) {
-    int i = 0;
-    for (int j=0; j<NODE_TYPES; j++) {
-        env->observations[i++] = env->nodes[j].total / (float)MAX_NODES;
-        env->observations[i++] = env->nodes[j].free / (float)MAX_NODES;
-    }
-    env->observations[i++] = env->space_tb / (float)MAX_SPACE_TB;
-    env->observations[i++] = env->free_space_tb / (float)MAX_SPACE_TB;
-    env->observations[i++] = env->energy / (float)ENERGY_STORAGE;
-    env->observations[i++] = env->energy_gen / (float)ENERGY_GEN;
-    env->observations[i++] = env->energy_storage / (float)ENERGY_STORAGE;
-    for (int j=0; j<NODE_TYPES; j++) {
-        env->observations[i++] = env->request.nodes[j] / (float)MAX_NODES;
-    }
-    env->observations[i++] = env->request.space_tb / (float)MAX_SPACE_TB;
-    env->observations[i++] = env->request.duration / (float)MAX_JOB_DURATION;
-    env->observations[i++] = env->prev_reward;
-
-    /*
-    for (int j=0; j<14; j++) {
-        if (env->observations[j] > 1.0f || env->observations[j] < -1.0f) {
-            printf("ERROR: observation %d out of range: %f\n", j, env->observations[j]);
-            exit(1);
-        }
-    }
-    */
 }
 
 void clear_finished_jobs(CoopHive* env) {
@@ -291,7 +291,10 @@ void c_step(CoopHive* env) {
     update_jobs(env);
 
     float base_price = job_price(env->request);
-    float offer_price = base_price * env->actions[0];
+
+    // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
+    float price_mul = 1.0f + ((float)env->actions[0] - 4.0f)/20.0f;
+    float offer_price = price_mul * base_price;
     if (offer_price > 0 && job_is_valid(env->request) && buyer_accepts(env->request, offer_price)) {
         env->request.price = offer_price;
         try_accept_job(env);
@@ -318,9 +321,9 @@ void c_step(CoopHive* env) {
     env->rewards[0] = reward;
     env->episode_return += reward;
 
-    compute_observations(env);
     env->request = generate_request(env);
-    env->prev_reward = env->rewards[0];
+    env->prev_reward = reward;
+    compute_observations(env);
 }
 
 const Color PUFF_RED = (Color){187, 0, 0, 255};
