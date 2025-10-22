@@ -19,10 +19,10 @@ int main() {
     */
     for (int i=0; i<10000000; i++) {
         if (env.request.duration > 20) {
-            env.actions[0] = 9;
+            env.actions[0] = 5;
             env.actions[1] = 0;
         } else {
-            env.actions[0] = 3;
+            env.actions[0] = 5;
             env.actions[1] = 0;
         }
         c_step(&env);
@@ -31,6 +31,7 @@ int main() {
         }
     }
     float n = env.log.n;
+    printf("N: %f\n", n);
     printf("Profit: %f\n", env.log.profit/n);
     printf("Job Revenue: %f\n", env.log.job_revenue/n);
     printf("Energy Revenue: %f\n", env.log.energy_revenue/n);

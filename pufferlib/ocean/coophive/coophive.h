@@ -99,19 +99,31 @@ Job generate_request(CoopHive* env) {
         return (Job){0};
     }
     Job job = (Job) {
-        .space_tb = rand()%env->free_space_tb + 1,
+        .space_tb = rand()%env->space_tb + 1,
         .start = env->tick,
         .duration = rand()%MAX_JOB_DURATION + 1,
         .active = true
     };
     for (int i=0; i<NODE_TYPES; i++) {
-        job.nodes[i] = rand()%env->nodes[i].free + 1;
+        job.nodes[i] = rand()%env->nodes[i].total + 1;
     }
     return job;
 }
 
 bool job_is_valid(Job job) {
-    return job.nodes > 0 && job.space_tb > 0;
+    bool any_nodes = false;
+    for (int i=0; i<NODE_TYPES; i++) {
+        if (job.nodes[i] < 0) {
+            return false;
+        }
+        if (job.nodes[i] > 0) {
+            any_nodes = true;
+        }
+    }
+    if (!any_nodes) {
+        return false;
+    }
+    return job.space_tb > 0;
 }
 
 void compute_observations(CoopHive* env) {
@@ -131,7 +143,6 @@ void compute_observations(CoopHive* env) {
     env->observations[i++] = env->request.space_tb / (float)MAX_SPACE_TB;
     env->observations[i++] = env->request.duration / (float)MAX_JOB_DURATION;
     env->observations[i++] = env->prev_reward;
-    
 
     /*
     for (int j=0; j<14; j++) {
@@ -170,6 +181,14 @@ int try_accept_job(CoopHive* env) {
     for (int i=0; i<MAX_JOBS; i++) {
         if (env->jobs[i].active) {
             continue;
+        }
+        if (job.space_tb > env->free_space_tb) {
+            return 1;
+        }
+        for (int j=0; j<NODE_TYPES; j++) {
+            if (job.nodes[j] > env->nodes[j].free) {
+                return 1;
+            }
         }
         env->jobs[i] = job;
         for (int j=0; j<NODE_TYPES; j++) {
@@ -217,7 +236,7 @@ void clear_finished_jobs(CoopHive* env) {
         if (!job.active) {
             continue;
         }
-        if (job.start + job.duration < env->tick) {
+        if (env->tick < job.start + job.duration) {
             continue;
         }
         for (int j=0; j<NODE_TYPES; j++) {
@@ -225,7 +244,6 @@ void clear_finished_jobs(CoopHive* env) {
         }
         env->free_space_tb += job.space_tb;
         memset(&env->jobs[i], 0, sizeof(Job));
-        job.active = false;
     }
 }
 
@@ -237,7 +255,7 @@ void update_jobs(CoopHive* env) {
             continue;
         }
 
-        float kw = job_kw(env->request);
+        float kw = job_kw(job);
         if (env->energy > kw) {
             env->energy -= kw;
             kw = 0;
@@ -273,6 +291,7 @@ void c_step(CoopHive* env) {
         env->log.episode_return += env->episode_return;
         env->log.n++;
         c_reset(env);
+        env->terminals[0] = 1;
     }
     env->tick++;
 
@@ -283,7 +302,7 @@ void c_step(CoopHive* env) {
         float diff = env->energy - ENERGY_STORAGE;
         env->energy = ENERGY_STORAGE;
         float profit = diff*kw_price(env->tick);
-        env->rewards[0] += REWARD_SCALE * profit;
+        env->rewards[0] += profit;
         env->energy_revenue += profit;
         env->profit += profit;
     }
@@ -307,22 +326,31 @@ void c_step(CoopHive* env) {
         env->energy_revenue += profit;
         env->profit += profit;
         env->energy -= amt;
+        env->rewards[0] += profit;
     }
 
     // Scale and clip rewards
     float reward = env->rewards[0];
     reward *= REWARD_SCALE;
-    if (reward > 1.0f) {
-        reward = 1.0f;
-    }
-    if (reward < -1.0f) {
-        reward = -1.0f;
+    if (reward > 1.0f || reward < -1.0f) {
+        printf("ERROR: reward out of range: %f\n", reward);
     }
     env->rewards[0] = reward;
-    env->episode_return += reward;
 
+    /*
+    env->rewards[0] = 0;
+    if (env->request.duration > 20 && env->actions[0] == 8) {
+        env->rewards[0] = 1;
+    }
+    if (env->request.duration <= 20 && env->actions[0] == 3) {
+        env->rewards[0] = 1;
+    }
+    */
+
+    env->episode_return += reward;
     env->request = generate_request(env);
     env->prev_reward = reward;
+
     compute_observations(env);
 }
 
