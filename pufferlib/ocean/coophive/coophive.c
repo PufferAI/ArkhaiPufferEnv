@@ -19,10 +19,10 @@ int main() {
     */
     for (int i=0; i<10000000; i++) {
         if (env.request.duration > 20) {
-            env.actions[0] = 5;
+            env.actions[0] = 7;
             env.actions[1] = 0;
         } else {
-            env.actions[0] = 5;
+            env.actions[0] = 4;
             env.actions[1] = 0;
         }
         c_step(&env);
