@@ -4,6 +4,21 @@
 #include "../env_binding.h"
 
 static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
+    env->episode_length = unpack(kwargs, "episode_length");
+    env->max_job_duration = unpack(kwargs, "max_job_duration");
+    env->energy_gen = unpack(kwargs, "energy_gen");
+    env->energy_storage = unpack(kwargs, "energy_storage");
+    env->max_nodes = unpack(kwargs, "max_nodes");
+    env->max_space_tb = unpack(kwargs, "max_space_tb");
+    env->buy_price_randomization = unpack(kwargs, "buy_price_randomization");
+    env->job_efficiency_randomization = unpack(kwargs, "job_efficiency_randomization");
+    env->reward_scale = unpack(kwargs, "reward_scale");
+    env->space_tb_price = unpack(kwargs, "space_tb_price");
+    env->a100_node_price = unpack(kwargs, "a100_node_price");
+    env->a100_node_energy_kw = unpack(kwargs, "a100_node_energy_kw");
+    env->h100_node_price = unpack(kwargs, "h100_node_price");
+    env->h100_node_energy_kw = unpack(kwargs, "h100_node_energy_kw");
+    init(env);
     return 0;
 }
 
