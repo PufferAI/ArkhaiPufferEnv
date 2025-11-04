@@ -75,6 +75,16 @@ typedef struct {
     float a100_node_energy_kw;
     float h100_node_price;
     float h100_node_energy_kw;
+    float energy_demand_base;
+    float energy_price_base;
+    float energy_price_sensitivity;
+    float energy_demand_threshold;
+    float a1;
+    float b1;
+    float a2;
+    float b2;
+    float a3;
+    float b3;
 } CoopHive;
 
 float randf(float min, float max) {
@@ -100,6 +110,16 @@ void init(CoopHive* env) {
     assert(env->a100_node_energy_kw > 0.0f);
     assert(env->h100_node_price > 0.0f);
     assert(env->h100_node_energy_kw > 0.0f);
+    assert(env->energy_demand_base > 0.0f);
+    assert(env->energy_price_base > 0.0f);
+    assert(env->energy_price_sensitivity > 0.0f);
+    assert(env->energy_demand_threshold > 0.0f);
+    assert(env->a1 != 0.0f);
+    assert(env->b1 != 0.0f);
+    assert(env->a2 != 0.0f);
+    assert(env->b2 != 0.0f);
+    assert(env->a3 != 0.0f);
+    assert(env->b3 != 0.0f);
 }
 
 Job generate_request(CoopHive* env) {
@@ -233,12 +253,19 @@ bool buyer_accepts(CoopHive* env, Job request, float offer_price) {
     return offer_price <= rng * job_price(env, request);
 }
 
-float kw_price(float t) {
-    return 0.15 + 0.05 * sin(2 * M_PI * t / 24);
+float calculate_price(float demand, float p0, float threshold, float c) {
+    float excess = fmaxf(0.0f, demand - threshold);
+    return p0 + c*powf(excess, 2.0f); // Quadratic for non-linear spike
 }
 
-float avg_kw_price(float t, float T) {
-    return T * (0.15 + 0.05 * sin(2 * M_PI * t / 24));
+float kw_price(CoopHive* env, float t) {
+    float demand = env->energy_demand_base + (
+        env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
+        env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
+        env->a3*cosf(6.0f*PI*t/24.0f) + env->b3*sinf(6.0f*PI*t/24.0f));
+    float excess = fmaxf(0.0f, demand - env->energy_demand_threshold);
+    float price_mwh = env->energy_price_base + env->energy_price_sensitivity*powf(excess, 2.0f);
+    return 0.001f*price_mwh;
 }
 
 void clear_finished_jobs(CoopHive* env) {
@@ -275,7 +302,7 @@ void update_jobs(CoopHive* env) {
             env->energy = 0;
         }
 
-        float energy_cost = kw*kw_price(env->tick);
+        float energy_cost = kw*kw_price(env, env->tick);
         float profit = job.price - energy_cost;
 
         env->profit += profit;
@@ -312,7 +339,7 @@ void c_step(CoopHive* env) {
     if (env->energy > env->energy_storage) {
         float diff = env->energy - env->energy_storage;
         env->energy = env->energy_storage;
-        float profit = diff*kw_price(env->tick);
+        float profit = diff*kw_price(env, env->tick);
         env->rewards[0] += profit;
         env->energy_revenue += profit;
         env->profit += profit;
@@ -333,7 +360,7 @@ void c_step(CoopHive* env) {
     // Sell energy
     if (env->actions[1] > 0) {
         float amt = 0.5f * env->energy;
-        float profit = amt*kw_price(env->tick);
+        float profit = amt*kw_price(env, env->tick);
         env->energy_revenue += profit;
         env->profit += profit;
         env->energy -= amt;

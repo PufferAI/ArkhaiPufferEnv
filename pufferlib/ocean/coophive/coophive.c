@@ -15,7 +15,17 @@ int main() {
         .a100_node_price=5.31,
         .a100_node_energy_kw=6.5,
         .h100_node_price=15.92,
-        .h100_node_energy_kw=10.0
+        .h100_node_energy_kw=10.0,
+        .energy_demand_base=1500.0,
+        .energy_price_base=20.0,
+        .energy_price_sensitivity=0.0001,
+        .energy_demand_threshold=1400,
+        .a1=-374,
+        .b1=-387,
+        .a2=-4.6,
+        .b2=-17.1,
+        .a3=3.2,
+        .b3=18.9,
     };
     init(&env);
     env.observations = (float*)calloc(14, sizeof(float));
