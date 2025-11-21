@@ -4,6 +4,7 @@ int main() {
     CoopHive env = {
         .episode_length=1000,
         .max_job_duration=100,
+        .request_timeout=5,
         .energy_gen=10,
         .energy_storage=100,
         .max_nodes=100,
@@ -28,7 +29,7 @@ int main() {
         .b3=18.9,
     };
     init(&env);
-    env.observations = (float*)calloc(14, sizeof(float));
+    env.observations = (float*)calloc(16, sizeof(float));
     env.actions = (int*)calloc(2, sizeof(int));
     env.rewards = (float*)calloc(1, sizeof(float));
     env.terminals = (unsigned char*)calloc(1, sizeof(unsigned char));

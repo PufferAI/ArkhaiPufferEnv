@@ -8,7 +8,7 @@ from pufferlib.ocean.coophive import binding
 
 class CoopHive(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, buf=None, seed=0,
-            episode_length=1000, max_job_duration=100,
+            episode_length=1000, max_job_duration=100, request_timeout=5,
             energy_gen=10, energy_storage=100, max_nodes=100, max_space_tb=100,
             buy_price_randomization=0.2, job_efficiency_randomization=0.2,
             reward_scale=0.0001, space_tb_price=0.03,
@@ -18,7 +18,7 @@ class CoopHive(pufferlib.PufferEnv):
             energy_price_sensitivity=0.0001, energy_demand_threshold=1400,
             a1=-374, b1=-387, a2=-4.6, b2=-17.1, a3=3.2, b3=18.9):
         self.single_observation_space = gymnasium.spaces.Box(low=0, high=1,
-            shape=(14,), dtype=np.float32)
+            shape=(16,), dtype=np.float32)
         self.single_action_space = gymnasium.spaces.MultiDiscrete([9, 2])
         self.render_mode = render_mode
         self.num_agents = num_envs
@@ -28,6 +28,7 @@ class CoopHive(pufferlib.PufferEnv):
             self.terminals, self.truncations, num_envs, seed,
             episode_length=episode_length,
             max_job_duration=max_job_duration,
+            request_timeout=request_timeout,
             energy_gen=energy_gen,
             energy_storage=energy_storage,
             max_nodes=max_nodes,

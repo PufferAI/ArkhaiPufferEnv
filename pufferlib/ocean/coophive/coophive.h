@@ -35,6 +35,7 @@ typedef struct {
     int duration;
     bool active;
     float price; // Per tick
+    int negotiations;
 } Job;
 
 typedef struct {
@@ -63,6 +64,7 @@ typedef struct {
     Job jobs[MAX_JOBS];
     int episode_length;
     int max_job_duration;
+    int request_timeout;
     float energy_gen;
     float energy_storage;
     int max_nodes;
@@ -100,6 +102,7 @@ void init(CoopHive* env) {
     // Sanity checks. These are here because it is easy to mess up init
     assert(env->episode_length > 0);
     assert(env->max_job_duration > 0);
+    assert(env->request_timeout > 0);
     assert(env->max_nodes > 0);
     assert(env->max_space_tb > 0);
     assert(env->buy_price_randomization >= 0.0f);
@@ -159,6 +162,14 @@ bool job_is_valid(Job job) {
     return job.space_tb > 0;
 }
 
+float job_price(CoopHive* env, Job job) {
+    float price = env->space_tb_price*job.space_tb;
+    for (int i=0; i<NODE_TYPES; i++) {
+        price += NODE_PRICES[i]*job.nodes[i];
+    }
+    return price;
+}
+
 void compute_observations(CoopHive* env) {
     int i = 0;
     for (int j=0; j<NODE_TYPES; j++) {
@@ -175,6 +186,8 @@ void compute_observations(CoopHive* env) {
     }
     env->observations[i++] = env->request.space_tb / env->max_space_tb;
     env->observations[i++] = env->request.duration / (float)env->max_job_duration;
+    env->observations[i++] = env->request.negotiations / (float)env->request_timeout;
+    env->observations[i++] = env->request.price / job_price(env, env->request);
     env->observations[i++] = env->prev_reward;
 
     /*
@@ -231,13 +244,6 @@ int try_accept_job(CoopHive* env) {
     return 1;
 }
 
-float job_price(CoopHive* env, Job job) {
-    float price = env->space_tb_price*job.space_tb;
-    for (int i=0; i<NODE_TYPES; i++) {
-        price += NODE_PRICES[i]*job.nodes[i];
-    }
-    return price;
-}
 
 float job_kw(CoopHive* env, Job job) {
     float kw = 0.0f;
@@ -248,9 +254,9 @@ float job_kw(CoopHive* env, Job job) {
     return efficiency*kw;
 }
  
-bool buyer_accepts(CoopHive* env, Job request, float offer_price) {
+float buyer_response(CoopHive* env, Job request, float offer_price) {
     float rng = 1.0f + randf(-env->buy_price_randomization, env->buy_price_randomization);
-    return offer_price <= rng * job_price(env, request);
+    float respone = rng * job_price(env, request);
 }
 
 float calculate_price(float demand, float p0, float threshold, float c) {
@@ -331,8 +337,25 @@ void c_step(CoopHive* env) {
         c_reset(env);
         env->terminals[0] = 1;
     }
-    env->tick++;
 
+    // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
+    float price_mul = 1.0f + ((float)env->actions[0] - 4.0f)/20.0f;
+    float base_price = job_price(env, env->request);
+    float offer_price = price_mul * base_price;
+    if (job_is_valid(env->request) && env->request.negotiations < env->request_timeout) {
+        float response_price = buyer_response(env, env->request, offer_price);
+        env->request.price = response_price;
+        if (response_price <= offer_price) {
+            env->request.price = offer_price;
+            try_accept_job(env);
+        } else {
+            env->request.negotiations++;
+            compute_observations(env);
+            return;
+        }
+    }
+
+    env->tick++;
     clear_finished_jobs(env);
 
     env->energy += env->energy_gen;
@@ -347,15 +370,6 @@ void c_step(CoopHive* env) {
 
     update_jobs(env);
 
-    float base_price = job_price(env, env->request);
-
-    // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
-    float price_mul = 1.0f + ((float)env->actions[0] - 4.0f)/20.0f;
-    float offer_price = price_mul * base_price;
-    if (offer_price > 0 && job_is_valid(env->request) && buyer_accepts(env, env->request, offer_price)) {
-        env->request.price = offer_price;
-        try_accept_job(env);
-    }
 
     // Sell energy
     if (env->actions[1] > 0) {

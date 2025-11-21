@@ -6,6 +6,7 @@
 static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->episode_length = unpack(kwargs, "episode_length");
     env->max_job_duration = unpack(kwargs, "max_job_duration");
+    env->request_timeout = unpack(kwargs, "request_timeout");
     env->energy_gen = unpack(kwargs, "energy_gen");
     env->energy_storage = unpack(kwargs, "energy_storage");
     env->max_nodes = unpack(kwargs, "max_nodes");
