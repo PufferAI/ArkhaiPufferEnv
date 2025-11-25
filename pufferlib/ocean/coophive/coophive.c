@@ -1,43 +1,20 @@
 #include "coophive.h"
 
 int main() {
-    CoopHive env = {
-        .episode_length=1000,
-        .max_job_duration=100,
-        .request_timeout=5,
-        .energy_gen=10,
-        .energy_storage=100,
-        .max_nodes=100,
-        .max_space_tb=100,
-        .buy_price_randomization=0.2,
-        .job_efficiency_randomization=0.2,
-        .reward_scale=0.0001,
-        .space_tb_price=0.03,
-        .a100_node_price=5.31,
-        .a100_node_energy_kw=6.5,
-        .h100_node_price=15.92,
-        .h100_node_energy_kw=10.0,
-        .energy_demand_base=1500.0,
-        .energy_price_base=20.0,
-        .energy_price_sensitivity=0.0001,
-        .energy_demand_threshold=1400,
-        .a1=-374,
-        .b1=-387,
-        .a2=-4.6,
-        .b2=-17.1,
-        .a3=3.2,
-        .b3=18.9,
-    };
+    //CoopHive env = create_default_env();
+    CoopHive env = create_energy_producer();
+    //CoopHive env = create_storage_center();
+    //CoopHive env = create_premium_hpc();
     init(&env);
-    env.observations = (float*)calloc(16, sizeof(float));
-    env.actions = (int*)calloc(2, sizeof(int));
+    env.observations = (float*)calloc(NUM_OBS, sizeof(float));
+    env.actions = (int*)calloc(NUM_ACT, sizeof(int));
     env.rewards = (float*)calloc(1, sizeof(float));
     env.terminals = (unsigned char*)calloc(1, sizeof(unsigned char));
 
     c_reset(&env);
     for (int i=0; i<10000000; i++) {
         env.actions[0] = 4;
-        env.actions[1] = 0;
+        env.actions[1] = 1;
         c_step(&env);
         if (env.terminals[0]) {
             c_reset(&env);

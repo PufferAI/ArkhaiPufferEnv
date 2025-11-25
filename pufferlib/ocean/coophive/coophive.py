@@ -16,12 +16,13 @@ class CoopHive(pufferlib.PufferEnv):
             h100_node_price=15.92, h100_node_energy_kw=10.0,
             energy_demand_base=1500.0, energy_price_base=20.0,
             energy_price_sensitivity=0.0001, energy_demand_threshold=1400,
-            a1=-374, b1=-387, a2=-4.6, b2=-17.1, a3=3.2, b3=18.9):
+            a1=-374, b1=-387, a2=-4.6, b2=-17.1, a3=3.2, b3=18.9, preset=0):
         self.single_observation_space = gymnasium.spaces.Box(low=0, high=1,
-            shape=(16,), dtype=np.float32)
+            shape=(17,), dtype=np.float32)
         self.single_action_space = gymnasium.spaces.MultiDiscrete([9, 2])
         self.render_mode = render_mode
         self.num_agents = num_envs
+        self.log_interval = log_interval
 
         super().__init__(buf)
         self.c_envs = binding.vec_init(self.observations, self.actions, self.rewards,
@@ -46,16 +47,22 @@ class CoopHive(pufferlib.PufferEnv):
             energy_price_sensitivity=energy_price_sensitivity,
             energy_demand_threshold=energy_demand_threshold,
             a1=a1, b1=b1, a2=a2, b2=b2, a3=a3, b3=b3,
+            preset=preset # Preset overrides all other params if nonzero.
         )
  
     def reset(self, seed=0):
+        self.tick = 0
         binding.vec_reset(self.c_envs, seed)
         return self.observations, []
 
     def step(self, actions):
         self.actions[:] = actions
         binding.vec_step(self.c_envs)
-        info = [binding.vec_log(self.c_envs)]
+        self.tick += 1
+        info = []
+        if self.tick % self.log_interval == 0:
+            info.append(binding.vec_log(self.c_envs))
+
         return (self.observations, self.rewards,
             self.terminals, self.truncations, info)
 

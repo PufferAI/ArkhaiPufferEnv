@@ -29,6 +29,7 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->b2 = unpack(kwargs, "b2");
     env->a3 = unpack(kwargs, "a3");
     env->b3 = unpack(kwargs, "b3");
+    env->preset = unpack(kwargs, "preset");
     init(env);
     return 0;
 }
