@@ -91,7 +91,7 @@ typedef struct {
     float a3;
     float b3;
     int preset;
-} CoopHive;
+} Arkhai;
 
 float randf(float min, float max) {
     return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
@@ -105,8 +105,8 @@ enum PRESET {
     PREMIUM_HPC,
 };
 
-CoopHive create_default_env() {
-    return (CoopHive) {
+Arkhai create_default_env() {
+    return (Arkhai) {
         .episode_length=1000,
         .max_job_duration=100,
         .request_timeout=5,
@@ -136,8 +136,8 @@ CoopHive create_default_env() {
     };
 }
 
-CoopHive create_energy_producer() {
-    CoopHive env = create_default_env();
+Arkhai create_energy_producer() {
+    Arkhai env = create_default_env();
     env.max_nodes = 0;
     env.max_space_tb = 0;
     env.energy_gen = 100;
@@ -145,8 +145,8 @@ CoopHive create_energy_producer() {
     return env;
 }
 
-CoopHive create_storage_center() {
-    CoopHive env = create_default_env();
+Arkhai create_storage_center() {
+    Arkhai env = create_default_env();
     env.max_nodes = 0;
     env.energy_gen = 0;
     env.energy_storage = 0;
@@ -156,15 +156,15 @@ CoopHive create_storage_center() {
 }
 
 // TODO: add sla, rep, etc
-CoopHive create_premium_hpc() {
-    CoopHive env = create_default_env();
+Arkhai create_premium_hpc() {
+    Arkhai env = create_default_env();
     env.a100_node_price *= 1.2;
     env.h100_node_price *= 1.2;
     env.space_tb_price *= 1.2;
     return env;
 }
 
-void init(CoopHive* env) {
+void init(Arkhai* env) {
     float* observations = env->observations;
     int* actions = env->actions;
     float* rewards = env->rewards;
@@ -221,7 +221,7 @@ void init(CoopHive* env) {
 // Jobs are generated based on the maximum capacity
 // of the current environment configuration. This should
 // be replaced with a more realistic distribution.
-Job generate_request(CoopHive* env) {
+Job generate_request(Arkhai* env) {
     Job job = (Job) {
         .space_tb = 0,
         .start = env->tick,
@@ -254,7 +254,7 @@ bool job_is_valid(Job job) {
     return job.space_tb >= 0;
 }
 
-float job_price(CoopHive* env, Job job) {
+float job_price(Arkhai* env, Job job) {
     float price = env->space_tb_price*job.space_tb;
     for (int i=0; i<NODE_TYPES; i++) {
         price += NODE_PRICES[i]*job.nodes[i];
@@ -262,7 +262,7 @@ float job_price(CoopHive* env, Job job) {
     return price;
 }
 
-void compute_observations(CoopHive* env) {
+void compute_observations(Arkhai* env) {
     int i = 0;
     env->observations[i++] = (env->tick % 24) / 24.0f;
     for (int j=0; j<NODE_TYPES; j++) {
@@ -293,7 +293,7 @@ void compute_observations(CoopHive* env) {
     */
 }
 
-void c_reset(CoopHive* env) {
+void c_reset(Arkhai* env) {
     env->tick = 0;
     for (int i=0; i<NODE_TYPES; i++) {
         if (env->nodes[i].total == 0) {
@@ -322,7 +322,7 @@ void c_reset(CoopHive* env) {
     compute_observations(env);
 }
 
-int try_accept_job(CoopHive* env) {
+int try_accept_job(Arkhai* env) {
     Job job = env->request;
     for (int i=0; i<MAX_JOBS; i++) {
         if (env->jobs[i].active) {
@@ -347,7 +347,7 @@ int try_accept_job(CoopHive* env) {
 }
 
 
-float job_kw(CoopHive* env, Job job) {
+float job_kw(Arkhai* env, Job job) {
     float kw = 0.0f;
     for (int i=0; i<NODE_TYPES; i++) {
         kw += job.nodes[i]*NODE_ENERGY_KW[i];
@@ -356,7 +356,7 @@ float job_kw(CoopHive* env, Job job) {
     return efficiency*kw;
 }
  
-float buyer_response(CoopHive* env, Job request, float offer_price) {
+float buyer_response(Arkhai* env, Job request, float offer_price) {
     float rng = 1.0f + randf(-env->buy_price_randomization, env->buy_price_randomization);
     return rng * job_price(env, request);
 }
@@ -366,7 +366,7 @@ float calculate_price(float demand, float p0, float threshold, float c) {
     return p0 + c*powf(excess, 2.0f); // Quadratic for non-linear spike
 }
 
-float kw_price(CoopHive* env, float t) {
+float kw_price(Arkhai* env, float t) {
     float demand = env->energy_demand_base + (
         env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
         env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
@@ -376,7 +376,7 @@ float kw_price(CoopHive* env, float t) {
     return 0.001f*price_mwh;
 }
 
-void clear_finished_jobs(CoopHive* env) {
+void clear_finished_jobs(Arkhai* env) {
     for (int i=0; i<MAX_JOBS; i++) {
         Job job = env->jobs[i];
         if (!job.active) {
@@ -393,7 +393,7 @@ void clear_finished_jobs(CoopHive* env) {
     }
 }
 
-void update_jobs(CoopHive* env) {
+void update_jobs(Arkhai* env) {
     float reward = 0;
     for (int i=0; i<MAX_JOBS; i++) {
         Job job = env->jobs[i];
@@ -423,7 +423,7 @@ void update_jobs(CoopHive* env) {
 } 
 
 
-void c_step(CoopHive* env) {
+void c_step(Arkhai* env) {
     env->rewards[0] = 0;
     env->terminals[0] = 0;
 
@@ -502,9 +502,9 @@ const Color PUFF_CYAN = (Color){0, 187, 187, 255};
 const Color PUFF_WHITE = (Color){241, 241, 241, 241};
 const Color PUFF_BACKGROUND = (Color){6, 24, 24, 255};
 
-void c_render(CoopHive* env) {
+void c_render(Arkhai* env) {
     if (!IsWindowReady()) {
-        InitWindow(1080, 720, "PufferLib CoopHive");
+        InitWindow(1080, 720, "PufferLib Arkhai");
         SetTargetFPS(5);
     }
 
@@ -517,7 +517,7 @@ void c_render(CoopHive* env) {
     EndDrawing();
 }
 
-void c_close(CoopHive* env) {
+void c_close(Arkhai* env) {
     if (IsWindowReady()) {
         CloseWindow();
     }

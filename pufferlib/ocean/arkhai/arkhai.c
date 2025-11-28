@@ -1,10 +1,10 @@
-#include "coophive.h"
+#include "arkhai.h"
 
 int main() {
-    //CoopHive env = create_default_env();
-    CoopHive env = create_energy_producer();
-    //CoopHive env = create_storage_center();
-    //CoopHive env = create_premium_hpc();
+    //Arkhai env = create_default_env();
+    Arkhai env = create_energy_producer();
+    //Arkhai env = create_storage_center();
+    //Arkhai env = create_premium_hpc();
     init(&env);
     env.observations = (float*)calloc(NUM_OBS, sizeof(float));
     env.actions = (int*)calloc(NUM_ACT, sizeof(int));

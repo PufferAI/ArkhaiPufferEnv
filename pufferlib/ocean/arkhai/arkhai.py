@@ -1,12 +1,12 @@
-'''CoopHive seller-side cloud market environment'''
+'''Arkhai seller-side cloud market environment'''
 
 import gymnasium
 import numpy as np
 
 import pufferlib
-from pufferlib.ocean.coophive import binding
+from pufferlib.ocean.arkhai import binding
 
-class CoopHive(pufferlib.PufferEnv):
+class Arkhai(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, buf=None, seed=0,
             episode_length=1000, max_job_duration=100, request_timeout=5,
             energy_gen=10, energy_storage=100, max_nodes=100, max_space_tb=100,
@@ -74,7 +74,7 @@ class CoopHive(pufferlib.PufferEnv):
 
 if __name__ == '__main__':
     N = 4096
-    env = CoopHive(num_envs=N)
+    env = Arkhai(num_envs=N)
     env.reset()
     steps = 0
 

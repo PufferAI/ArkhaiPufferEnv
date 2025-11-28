@@ -1,6 +1,6 @@
-#include "coophive.h"
+#include "arkhai.h"
 
-#define Env CoopHive 
+#define Env Arkhai 
 #include "../env_binding.h"
 
 static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
