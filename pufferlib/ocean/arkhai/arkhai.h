@@ -90,6 +90,7 @@ typedef struct {
     float b2;
     float a3;
     float b3;
+    int randomize_offset;
     int preset;
 } Arkhai;
 
@@ -107,6 +108,7 @@ enum PRESET {
 
 Arkhai create_default_env() {
     return (Arkhai) {
+        .tick=0,
         .episode_length=1000,
         .max_job_duration=100,
         .request_timeout=5,
@@ -132,6 +134,7 @@ Arkhai create_default_env() {
         .b2=-17.1,
         .a3=3.2,
         .b3=18.9,
+        .randomize_offset=1,
         .preset=NONE,
     };
 }
@@ -294,7 +297,17 @@ void compute_observations(Arkhai* env) {
 }
 
 void c_reset(Arkhai* env) {
-    env->tick = 0;
+    // This is for first-time reset. Staggering improves training stability.
+    if (env->randomize_offset && env->tick == 0) {
+        env->tick = rand()%env->max_job_duration;
+    } else {
+        env->tick = 0;
+    }
+
+    if (env->randomize_offset) {
+        env->tick = rand()%env->max_job_duration;
+    }
+
     for (int i=0; i<NODE_TYPES; i++) {
         if (env->nodes[i].total == 0) {
             env->nodes[i].free = 0;
