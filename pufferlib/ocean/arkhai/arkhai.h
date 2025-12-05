@@ -22,6 +22,8 @@ float NODE_ENERGY_KW[] = {0, 0};
 
 typedef struct {
     float score;
+    float buyer_spend;
+    float buyer_savings;
     float profit;
     float job_revenue;
     float energy_revenue;
@@ -59,6 +61,8 @@ typedef struct {
     float energy;
     float job_revenue;
     float energy_revenue;
+    float buyer_spend;
+    float buyer_savings;
     float profit;
     float prev_reward;
     float energy_expense;
@@ -73,6 +77,7 @@ typedef struct {
     int max_nodes;
     float max_space_tb;
     float buy_price_randomization;
+    float sell_price_randomization;
     float job_efficiency_randomization;
     float reward_scale;
     float space_tb_price;
@@ -90,6 +95,7 @@ typedef struct {
     float b2;
     float a3;
     float b3;
+    int side;
     int randomize_offset;
     int preset;
 } Arkhai;
@@ -106,6 +112,12 @@ enum PRESET {
     PREMIUM_HPC,
 };
 
+enum SIDE {
+    SELLER,
+    BUYER,
+    BOTH,
+};
+
 Arkhai create_default_env() {
     return (Arkhai) {
         .tick=0,
@@ -117,6 +129,7 @@ Arkhai create_default_env() {
         .max_nodes=100,
         .max_space_tb=100,
         .buy_price_randomization=0.2,
+        .sell_price_randomization=0.2,
         .job_efficiency_randomization=0.2,
         .reward_scale=0.0001,
         .space_tb_price=0.03,
@@ -134,6 +147,7 @@ Arkhai create_default_env() {
         .b2=-17.1,
         .a3=3.2,
         .b3=18.9,
+        .side=SELLER,
         .randomize_offset=1,
         .preset=NONE,
     };
@@ -218,33 +232,17 @@ void init(Arkhai* env) {
     assert(env->b2 != 0.0f);
     assert(env->a3 != 0.0f);
     assert(env->b3 != 0.0f);
+    assert(env->side == SELLER || env->side == BUYER);
+    assert(env->randomize_offset == 0 || env->randomize_offset == 1);
+    assert(
+        env->preset == NONE ||
+        env->preset == DEFAULT ||
+        env->preset == ENERGY_PRODUCER ||
+        env->preset == STORAGE_CENTER ||
+        env->preset == PREMIUM_HPC
+    );
 }
 
-
-// Jobs are generated based on the maximum capacity
-// of the current environment configuration. This should
-// be replaced with a more realistic distribution.
-Job generate_request(Arkhai* env) {
-    Job job = (Job) {
-        .space_tb = 0,
-        .start = env->tick,
-        .duration = rand()%env->max_job_duration + 1,
-        .active = true
-    };
- 
-    if (env->space_tb > 0) {
-        job.space_tb = rand()%env->space_tb + 1;
-    }
-
-    for (int i=0; i<NODE_TYPES; i++) {
-        if (env->nodes[i].total > 0) {
-            job.nodes[i] = rand()%env->nodes[i].total + 1;
-        } else {
-            job.nodes[i] = 0;
-        }
-    }
-    return job;
-}
 
 // Relaxed from milestone 1 to support
 // storage centers with 0 nodes
@@ -265,18 +263,56 @@ float job_price(Arkhai* env, Job job) {
     return price;
 }
 
+// Jobs are generated based on the maximum capacity
+// of the current environment configuration. This should
+// be replaced with a more realistic distribution.
+Job generate_request(Arkhai* env) {
+    Job job = (Job) {
+        .space_tb = 0,
+        .start = env->tick,
+        .duration = rand()%env->max_job_duration + 1,
+        .active = true,
+        .negotiations = 0
+    };
+ 
+    if (env->space_tb > 0) {
+        job.space_tb = rand()%env->space_tb + 1;
+    }
+
+    for (int i=0; i<NODE_TYPES; i++) {
+        if (env->nodes[i].total > 0) {
+            job.nodes[i] = rand()%env->nodes[i].total + 1;
+        } else {
+            job.nodes[i] = 0;
+        }
+    }
+    job.price = job_price(env, job);
+    return job;
+}
+
 void compute_observations(Arkhai* env) {
     int i = 0;
     env->observations[i++] = (env->tick % 24) / 24.0f;
-    for (int j=0; j<NODE_TYPES; j++) {
-        env->observations[i++] = env->nodes[j].total / ((float)env->max_nodes + 1);
-        env->observations[i++] = env->nodes[j].free / ((float)env->max_nodes + 1);
+
+    // DO NOT ADD OR CHANGE INDEXING WITHOUT UPDATING BOTH BUYER AND SELLER CODE,
+    // AS WELL AS THE OBS SIZE IN PYTHON. WE DO NOT HAVE A GOOD WAY TO AUTOMATICALLY
+    // CHECK THIS. YOU WILL CAUSE SILENT MEMORY CORRUPTION OR SEGFAULTS.
+    if (env->side == SELLER) {
+        for (int j=0; j<NODE_TYPES; j++) {
+            env->observations[i++] = env->nodes[j].total / ((float)env->max_nodes + 1);
+            env->observations[i++] = env->nodes[j].free / ((float)env->max_nodes + 1);
+        }
+        env->observations[i++] = env->space_tb / ((float)env->max_space_tb + 1);
+        env->observations[i++] = env->free_space_tb / ((float)env->max_space_tb + 1);
+        env->observations[i++] = env->energy / ((float)env->energy_storage + 1);
+        env->observations[i++] = env->energy_gen / ((float)env->energy_gen + 1);
+        env->observations[i++] = env->energy_storage / ((float)env->energy_storage + 1);
+    } else if (env->side == BUYER) {
+        int n = 5 + 2*NODE_TYPES;
+        memset(env->observations + i, 0, n*sizeof(float));
+        i += n;
     }
-    env->observations[i++] = env->space_tb / ((float)env->max_space_tb + 1);
-    env->observations[i++] = env->free_space_tb / ((float)env->max_space_tb + 1);
-    env->observations[i++] = env->energy / ((float)env->energy_storage + 1);
-    env->observations[i++] = env->energy_gen / ((float)env->energy_gen + 1);
-    env->observations[i++] = env->energy_storage / ((float)env->energy_storage + 1);
+
     for (int j=0; j<NODE_TYPES; j++) {
         env->observations[i++] = env->request.nodes[j] / ((float)env->max_nodes + 1);
     }
@@ -299,7 +335,7 @@ void compute_observations(Arkhai* env) {
 void c_reset(Arkhai* env) {
     // This is for first-time reset. Staggering improves training stability.
     if (env->randomize_offset && env->tick == 0) {
-        env->tick = rand()%env->max_job_duration;
+        env->tick = rand()%env->episode_length;
     } else {
         env->tick = 0;
     }
@@ -326,6 +362,8 @@ void c_reset(Arkhai* env) {
     env->energy = 0;
     env->job_revenue = 0;
     env->energy_revenue = 0;
+    env->buyer_spend = 0;
+    env->buyer_savings = 0;
     env->profit = 0;
     env->prev_reward = 0;
     env->energy_expense = 0;
@@ -359,7 +397,6 @@ int try_accept_job(Arkhai* env) {
     return 1;
 }
 
-
 float job_kw(Arkhai* env, Job job) {
     float kw = 0.0f;
     for (int i=0; i<NODE_TYPES; i++) {
@@ -369,8 +406,15 @@ float job_kw(Arkhai* env, Job job) {
     return efficiency*kw;
 }
  
+// These two fns are simple responses for single-side sims. Ideally, you'd match them to
+// the distribution of real-world demand to first order + heavy randomization.
 float buyer_response(Arkhai* env, Job request, float offer_price) {
     float rng = 1.0f + randf(-env->buy_price_randomization, env->buy_price_randomization);
+    return rng * job_price(env, request);
+}
+
+float seller_response(Arkhai* env, Job request, float offer_price) {
+    float rng = 1.0f + randf(-env->sell_price_randomization, env->sell_price_randomization);
     return rng * job_price(env, request);
 }
 
@@ -425,16 +469,23 @@ void update_jobs(Arkhai* env) {
 
         float energy_cost = kw*kw_price(env, env->tick);
         float profit = job.price - energy_cost;
+        float buyer_savings = job_price(env, job) - job.price;
 
         env->profit += profit;
+        env->buyer_spend += job.price;
+        env->buyer_savings += buyer_savings;
         env->job_revenue += job.price;
         env->energy_expense += energy_cost;
-        reward += profit;
+        if (env->side == SELLER) {
+            reward += profit;
+        } else {
+            reward += buyer_savings;
+        }
+
     }
     
     env->rewards[0] += reward;
 } 
-
 
 void c_step(Arkhai* env) {
     env->rewards[0] = 0;
@@ -442,6 +493,8 @@ void c_step(Arkhai* env) {
 
     if (env->tick >= env->episode_length) {
         env->log.score += env->profit;
+        env->log.buyer_spend += env->buyer_spend;
+        env->log.buyer_savings += env->buyer_savings;
         env->log.profit += env->profit;
         env->log.energy_expense += env->energy_expense;
         env->log.job_revenue += env->job_revenue;
@@ -457,18 +510,33 @@ void c_step(Arkhai* env) {
     float price_mul = 1.0f + ((float)env->actions[0] - 4.0f)/20.0f;
     float base_price = job_price(env, env->request);
     float offer_price = price_mul * base_price;
-    if (job_is_valid(env->request) && env->request.negotiations < env->request_timeout) {
-        float response_price = buyer_response(env, env->request, offer_price);
-        env->request.price = response_price;
+
+    // TODO: Clean up this noob shit
+    if (job_is_valid(env->request)) {
+        env->request.negotiations++;
+        float response_price;
+        if (env->side == SELLER) {
+            response_price = buyer_response(env, env->request, offer_price);
+        } else {
+            response_price = seller_response(env, env->request, offer_price);
+        }
+
         if (response_price <= offer_price) {
             env->request.price = offer_price;
             try_accept_job(env);
-        } else {
-            env->request.negotiations++;
+        } else if (env->request.negotiations < env->request_timeout) {
             compute_observations(env);
             return;
         }
     }
+
+    // TODO: Something like this for timeout?
+    /*
+    else if (env->request.negotiations == env->request_timeout) {
+        env->rewards[0] -= 1.0f;
+        env->episode_return -= 1.0f;
+    }
+    */
 
     env->tick++;
     clear_finished_jobs(env);
@@ -478,16 +546,17 @@ void c_step(Arkhai* env) {
         float diff = env->energy - env->energy_storage;
         env->energy = env->energy_storage;
         float profit = diff*kw_price(env, env->tick);
-        env->rewards[0] += profit;
         env->energy_revenue += profit;
         env->profit += profit;
+        if (env->side == SELLER) {
+            env->rewards[0] += profit;
+        }
     }
 
     update_jobs(env);
 
-
     // Sell energy
-    if (env->actions[1] > 0) {
+    if (env->actions[1] > 0 && env->side == SELLER) {
         float amt = 0.5f * env->energy;
         float profit = amt*kw_price(env, env->tick);
         env->energy_revenue += profit;

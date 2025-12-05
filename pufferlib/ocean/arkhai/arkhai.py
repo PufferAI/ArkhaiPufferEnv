@@ -8,15 +8,17 @@ from pufferlib.ocean.arkhai import binding
 
 class Arkhai(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, buf=None, seed=0,
-            episode_length=1000, max_job_duration=100, request_timeout=5,
+            episode_length=1024, max_job_duration=100, request_timeout=5,
             energy_gen=10, energy_storage=100, max_nodes=100, max_space_tb=100,
-            buy_price_randomization=0.2, job_efficiency_randomization=0.2,
+            buy_price_randomization=0.2, sell_price_randomization=0.2,
+            job_efficiency_randomization=0.2,
             reward_scale=0.0001, space_tb_price=0.03,
             a100_node_price=5.31, a100_node_energy_kw=6.5,
             h100_node_price=15.92, h100_node_energy_kw=10.0,
             energy_demand_base=1500.0, energy_price_base=20.0,
             energy_price_sensitivity=0.0001, energy_demand_threshold=1400,
-            a1=-374, b1=-387, a2=-4.6, b2=-17.1, a3=3.2, b3=18.9, randomize_offset=1, preset=0):
+            a1=-374, b1=-387, a2=-4.6, b2=-17.1, a3=3.2, b3=18.9,
+            randomize_offset=1, side=0, preset=0):
         self.single_observation_space = gymnasium.spaces.Box(low=0, high=1,
             shape=(17,), dtype=np.float32)
         self.single_action_space = gymnasium.spaces.MultiDiscrete([9, 2])
@@ -35,6 +37,7 @@ class Arkhai(pufferlib.PufferEnv):
             max_nodes=max_nodes,
             max_space_tb=max_space_tb,
             buy_price_randomization=buy_price_randomization,
+            sell_price_randomization=sell_price_randomization,
             job_efficiency_randomization=job_efficiency_randomization,
             reward_scale=reward_scale,
             space_tb_price=space_tb_price,
@@ -48,6 +51,7 @@ class Arkhai(pufferlib.PufferEnv):
             energy_demand_threshold=energy_demand_threshold,
             a1=a1, b1=b1, a2=a2, b2=b2, a3=a3, b3=b3,
             randomize_offset=randomize_offset,
+            side=side,
             preset=preset # Preset overrides all other params if nonzero.
         )
  

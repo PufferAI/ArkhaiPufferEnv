@@ -12,6 +12,7 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->max_nodes = unpack(kwargs, "max_nodes");
     env->max_space_tb = unpack(kwargs, "max_space_tb");
     env->buy_price_randomization = unpack(kwargs, "buy_price_randomization");
+    env->sell_price_randomization = unpack(kwargs, "sell_price_randomization");
     env->job_efficiency_randomization = unpack(kwargs, "job_efficiency_randomization");
     env->reward_scale = unpack(kwargs, "reward_scale");
     env->space_tb_price = unpack(kwargs, "space_tb_price");
@@ -30,6 +31,7 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->a3 = unpack(kwargs, "a3");
     env->b3 = unpack(kwargs, "b3");
     env->randomize_offset = unpack(kwargs, "randomize_offset");
+    env->side = unpack(kwargs, "side");
     env->preset = unpack(kwargs, "preset");
     init(env);
     return 0;
@@ -37,6 +39,8 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
 
 static int my_log(PyObject* dict, Log* log) {
     assign_to_dict(dict, "score", log->score);
+    assign_to_dict(dict, "buyer_spend", log->buyer_spend);
+    assign_to_dict(dict, "buyer_savings", log->buyer_savings);
     assign_to_dict(dict, "profit", log->profit);
     assign_to_dict(dict, "job_revenue", log->job_revenue);
     assign_to_dict(dict, "energy_revenue", log->energy_revenue);
