@@ -33,7 +33,28 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->randomize_offset = unpack(kwargs, "randomize_offset");
     env->side = unpack(kwargs, "side");
     env->preset = unpack(kwargs, "preset");
-    init(env);
+    ClusterSpec seller_spec = {
+        .node_capacity = unpack(kwargs, "node_capacity"),
+        .node_capacity_dr = unpack(kwargs, "node_capacity_dr"),
+        .space_tb = unpack(kwargs, "space_tb"),
+        .space_tb_dr = unpack(kwargs, "space_tb_dr"),
+        .energy_gen = unpack(kwargs, "energy_gen"),
+        .energy_gen_dr = unpack(kwargs, "energy_gen_dr"),
+        .energy_storage = unpack(kwargs, "energy_storage"),
+        .energy_storage_dr = unpack(kwargs, "energy_storage_dr"),
+        .buy_price = unpack(kwargs, "buy_price"),
+        .buy_price_dr = unpack(kwargs, "buy_price_dr"),
+        .sell_price = unpack(kwargs, "sell_price"),
+        .sell_price_dr = unpack(kwargs, "sell_price_dr"),
+        .job_efficiency = unpack(kwargs, "job_efficiency"),
+        .job_efficiency_dr = unpack(kwargs, "job_efficiency_dr")
+        .heuristic_price_dr = unpack(kwargs, "seller_heuristic_price_dr"),
+    }
+
+    ClusterSpec buyer_spec = {0};
+    buyer_spec.heuristic_price_dr = unpack(kwargs, "buyer_heuristic_price_dr");
+
+    init(env, buyer_spec, seller_spec);
     return 0;
 }
 

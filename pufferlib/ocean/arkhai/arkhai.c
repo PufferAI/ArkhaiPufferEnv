@@ -1,12 +1,55 @@
 #include "arkhai.h"
 
 int main() {
-    Arkhai env = create_default_env();
-    env.side = BUYER;
+    Arkhai env = {
+        .tick=0,
+        .episode_length=1000,
+        .max_job_duration=100,
+        .request_timeout=5,
+        .buy_price_randomization=0.2,
+        .sell_price_randomization=0.2,
+        .job_efficiency_randomization=0.2,
+        .reward_scale=0.0001,
+        .space_tb_price=0.03,
+        .a100_node_price=5.31,
+        .a100_node_energy_kw=6.5,
+        .h100_node_price=15.92,
+        .h100_node_energy_kw=10.0,
+        .energy_demand_base=1500.0,
+        .energy_price_base=20.0,
+        .energy_price_sensitivity=0.0001,
+        .energy_demand_threshold=1400,
+        .a1=-374,
+        .b1=-387,
+        .a2=-4.6,
+        .b2=-17.1,
+        .a3=3.2,
+        .b3=18.9,
+        .randomize_offset=1,
+        .preset=NONE,
+    };
+    ClusterSpec seller_spec = {
+        .node_capacity = 100,
+        .node_capacity_dr = 0.2,
+        .space_tb = 10000,
+        .space_tb_dr = 0.2,
+        .energy_gen = 100,
+        .energy_gen_dr = 0.2,
+        .energy_storage = 1000,
+        .energy_storage_dr = 0.2,
+        .buy_price = 0.0,
+        .buy_price_dr = 0.0,
+        .sell_price = 0.0,
+        .sell_price_dr = 0.0,
+        .job_efficiency = 0.0,
+        .job_efficiency_dr = 0.0,
+    };
+    ClusterSpec buyer_spec = {0};
+
     //Arkhai env = create_energy_producer();
     //Arkhai env = create_storage_center();
     //Arkhai env = create_premium_hpc();
-    init(&env);
+    init(&env, buyer_spec, seller_spec);
     env.observations = (float*)calloc(NUM_OBS, sizeof(float));
     env.actions = (int*)calloc(NUM_ACT, sizeof(int));
     env.rewards = (float*)calloc(1, sizeof(float));
