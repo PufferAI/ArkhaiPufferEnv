@@ -27,6 +27,8 @@ int main() {
         .b3=18.9,
         .randomize_offset=1,
         .preset=NONE,
+        .num_agent_sellers=1,
+        .num_agent_buyers=1,
     };
     ClusterSpec seller_spec = {
         .node_capacity = 100,
@@ -49,11 +51,12 @@ int main() {
     //Arkhai env = create_energy_producer();
     //Arkhai env = create_storage_center();
     //Arkhai env = create_premium_hpc();
+    int num_agents = env.num_agent_buyers + env.num_agent_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(1, sizeof(float));
-    env.terminals = (unsigned char*)calloc(1, sizeof(unsigned char));
+    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
+    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
+    env.rewards = (float*)calloc(num_agents, sizeof(float));
+    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
 
     c_reset(&env);
     for (int i=0; i<10000000; i++) {

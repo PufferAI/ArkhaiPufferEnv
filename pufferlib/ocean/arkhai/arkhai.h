@@ -8,12 +8,12 @@
 #define MAX_JOBS 100
 #define NODE_TYPES 2
 
-#define NUM_OBS 17
+#define NUM_OBS 18
 #define NUM_ACT 2
 
 typedef struct {
     int price;
-    int energy; } NodeSpec;
+    int kwh_storage; } NodeSpec;
 const int A100 = 0;
 const int H100 = 1;
 
@@ -35,12 +35,13 @@ typedef struct {
 
 typedef struct {
     int nodes[NODE_TYPES];
-    int space_tb;
+    int tb_usage;
     int start;
     int duration;
     bool active;
     float price; // Per tick
     int negotiations;
+    float efficiency; // Should be a joint property of job and cluster...hard to model
 } Job;
 
 typedef struct {
@@ -49,12 +50,14 @@ typedef struct {
 } Node;
 
 typedef struct {
-    float energy;
-    float energy_gen;
-    float energy_storage;
-    float free_space_tb;
-    float space_tb;
     Node nodes[NODE_TYPES];
+    float tb_capacity;
+    float tb_usage;
+    float kwh_storage;
+    float kwh_capacity;
+    float kw_generation;
+    // Placeholders are here but these are not really meaningful without some
+    // sort of requirement or reward directive on job requests
     int sla;
     int location;
     float uptime;
@@ -66,42 +69,27 @@ typedef struct {
 typedef struct {
     int node_capacity;
     float node_capacity_dr;
-    int space_tb;
-    float space_tb_dr;
-    float energy_gen;
-    float energy_gen_dr;
-    float energy_storage;
-    float energy_storage_dr;
-    float buy_price;
-    float buy_price_dr;
-    float sell_price;
-    float sell_price_dr;
-    float job_efficiency;
-    float job_efficiency_dr;
+    int tb_capacity;
+    float tb_capacity_dr;
+    float kwh_capacity;
+    float kwh_capacity_dr;
+    float kw_generation;
+    float kw_generation_dr;
 } ClusterSpec;
 
 typedef struct {
-    int type;
-    Node nodes[NODE_TYPES];
-    Cluster cluster;
     ClusterSpec cluster_spec;
-    int space_tb;
-    int free_space_tb;
-    float energy_gen;
-    float energy_storage;
-    float energy;
+    Cluster cluster;
+    Job jobs[MAX_JOBS];
+    Job request;
     float job_revenue;
+    float job_expense;
     float energy_revenue;
-    float profit;
-    float expense;
     float energy_expense;
     float prev_reward;
     float episode_return;
-    Job jobs[MAX_JOBS];
     bool is_heuristic;
     bool is_buyer;
-    Job request;
-    int idx;
 } Agent;
 
 typedef struct {
@@ -111,36 +99,30 @@ typedef struct {
     float* rewards;
     unsigned char* terminals;
     Agent* agents;
-    int num_agent_sellers;
-    int num_agent_buyers;
+    int ai_sellers;
+    int ai_buyers;
+    int scripted_buyers;
+    int scripted_sellers;
     int num_agents;
-    int num_heuristic_sellers;
-    int num_heuristic_buyers;
-    bool buyer_is_heuristic;
     int tick;
     int episode_length;
-    int max_job_duration;
-    float job_duration_dr;
     int request_timeout;
-    int max_nodes;
-    float job_space_tb;
-    float job_space_tb_dr;
-    int max_space_tb;
-    float max_energy_storage;
-    float max_energy_gen;
-    float buy_price_randomization;
-    float sell_price_randomization;
-    float job_efficiency_randomization;
+    int job_duration;
+    float job_duration_dr;
+    float job_tb_usage;
+    float job_tb_usage_dr;
+    float scripted_sell_price_dr;
+    float scripted_buy_price_dr;
     float reward_scale;
-    float space_tb_price;
-    float a100_node_price;
-    float a100_node_energy_kw;
-    float h100_node_price;
-    float h100_node_energy_kw;
+    float tb_price;
+    float a100_price;
+    float a100_kw;
+    float h100_price;
+    float h100_kw;
     float energy_demand_base;
-    float energy_price_base;
-    float energy_price_sensitivity;
-    float energy_demand_threshold;
+    float kwh_price_base;
+    float kwh_price_sensitivity;
+    float kwh_demand_threshold;
     float a1;
     float b1;
     float a2;
@@ -151,10 +133,6 @@ typedef struct {
     int preset;
     Agent* serving;
 } Arkhai;
-
-float randf(float min, float max) {
-    return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
-}
 
 enum PRESET {
     NONE,
@@ -170,40 +148,167 @@ enum SIDE {
     BOTH,
 };
 
+float randf(float min, float max) {
+    return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
+}
+
 float randomized(float base, float dr) {
     return randf(base*(1.0f-dr), base*(1.0f+dr));
 }
 
 void init_cluster(Cluster* cluster, ClusterSpec* spec) {
-    cluster->energy_gen = randomized(spec->energy_gen, spec->energy_gen_dr);
-    cluster->energy_storage = randomized(spec->energy_storage, spec->energy_storage_dr);
-    cluster->space_tb = randomized(spec->space_tb, spec->space_tb_dr);
+    cluster->kw_generation = randomized(spec->kw_generation, spec->kw_generation_dr);
+    cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
+    cluster->tb_capacity = randomized(spec->tb_capacity, spec->tb_capacity_dr);
     for (int i=0; i<NODE_TYPES; i++) {
         cluster->nodes[i].total = randomized(spec->node_capacity, spec->node_capacity_dr);
         cluster->nodes[i].free = cluster->nodes[i].total;
     }
 }
 
-void apply_energy_producer_preset(Arkhai* env) {
+/*
+void apply_kwh_storage_producer_preset(ClusterSpec* spec) {
     env->max_nodes = 0;
-    env->max_space_tb = 0;
-    env->max_energy_gen = 100;
-    env->max_energy_storage = 1000;
+    env->max_tb_usage = 0;
+    env->max_kw_generation = 100;
+    env->max_kwh_capacity = 1000;
 }
 
 void apply_storage_center_preset(Arkhai* env) {
     env->max_nodes = 0;
-    env->max_energy_gen = 0;
-    env->max_energy_storage = 0;
-    env->max_space_tb = 10000;
-    env->space_tb_price = 0.02;
+    env->max_kw_generation = 0;
+    env->max_kwh_capacity = 0;
+    env->max_tb_usage = 10000;
+    env->tb_usage_price = 0.02;
 }
 
 // TODO: add sla, rep, etc
 void apply_premium_hpc_preset(Arkhai* env) {
     env->a100_node_price *= 1.2;
     env->h100_node_price *= 1.2;
-    env->space_tb_price *= 1.2;
+    env->tb_usage_price *= 1.2;
+}
+*/
+
+void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
+    env->num_agents = env->ai_sellers + env->ai_buyers + env->scripted_sellers + env->scripted_buyers;
+    env->agents = calloc(env->num_agents, sizeof(Agent));
+
+    int agent_idx = 0;
+    for (int i=0; i<env->num_agent_sellers; i++) {
+        env->agents[agent_idx].cluster_spec = seller_spec;
+        env->agents[agent_idx].is_heuristic = false;
+        env->agents[agent_idx].is_buyer = false;
+        agent_idx++;
+    }
+    for (int i=0; i<env->num_agent_buyers; i++) {
+        env->agents[agent_idx].cluster_spec = buyer_spec;
+        env->agents[agent_idx].is_heuristic = false;
+        env->agents[agent_idx].is_buyer = true;
+        agent_idx++;
+    }
+    for (int i=0; i<env->num_heuristic_sellers; i++) {
+        env->agents[agent_idx].cluster_spec = seller_spec;
+        env->agents[agent_idx].is_heuristic = true;
+        env->agents[agent_idx].is_buyer = false;
+        agent_idx++;
+    }
+    for (int i=0; i<env->num_heuristic_buyers; i++) {
+        env->agents[agent_idx].cluster_spec = buyer_spec;
+        env->agents[agent_idx].is_heuristic = true;
+        env->agents[agent_idx].is_buyer = true;
+        agent_idx++;
+    }
+
+    NODE_PRICES[A100] = env->a100_node_price;
+    NODE_PRICES[H100] = env->h100_node_price;
+    NODE_ENERGY_KW[A100] = env->a100_node_kwh_storage_kw;
+    NODE_ENERGY_KW[H100] = env->h100_node_kwh_storage_kw;
+
+    int ai_sellers;
+    int ai_buyers;
+    int scripted_buyers;
+    int scripted_sellers;
+    int num_agents;
+    int tick;
+    int episode_length;
+    int request_timeout;
+    int job_duration;
+    float job_duration_dr;
+    float job_tb_usage;
+    float job_tb_usage_dr;
+    float scripted_sell_price_dr;
+    float scripted_buy_price_dr;
+    float reward_scale;
+    float tb_price;
+    float a100_price;
+    float a100_kw;
+    float h100_price;
+    float h100_kw;
+    float energy_demand_base;
+    float kwh_price_base;
+    float kwh_price_sensitivity;
+    float kwh_demand_threshold;
+    float a1;
+    float b1;
+    float a2;
+    float b2;
+    float a3;
+    float b3;
+    int randomize_offset;
+    int preset;
+ 
+    // Sanity checks. These are here because it is easy to mess up init
+    assert(env->ai_sellers >= 0);
+    assert(env->ai_buyers >= 0);
+    assert(env->scripted_buyers >= 0);
+    assert(env->scripted_sellers >= 0);
+    assert(env->num_agents > 0);
+    assert(env->episode_length > 0);
+    assert(env->request_timeout >= 0);
+    assert(env->job_duration > 0);
+    assert(env->job_duration_dr >= 0.0f);
+
+    assert(env->episode_length > 0);
+    assert(env->max_job_duration > 0);
+    assert(env->request_timeout > 0);
+    assert(env->reward_scale > 0.0f);
+    assert(env->a100_node_price > 0.0f);
+    assert(env->a100_node_kwh_storage_kw > 0.0f);
+    assert(env->h100_node_price > 0.0f);
+    assert(env->h100_node_kwh_storage_kw > 0.0f);
+    assert(env->kwh_storage_demand_base > 0.0f);
+    assert(env->kwh_storage_price_base > 0.0f);
+    assert(env->kwh_storage_price_sensitivity > 0.0f);
+    assert(env->kwh_storage_demand_threshold > 0.0f);
+    assert(env->a1 != 0.0f);
+    assert(env->b1 != 0.0f);
+    assert(env->a2 != 0.0f);
+    assert(env->b2 != 0.0f);
+    assert(env->a3 != 0.0f);
+    assert(env->b3 != 0.0f);
+    assert(env->randomize_offset == 0 || env->randomize_offset == 1);
+    assert(
+        env->preset == NONE ||
+        env->preset == ENERGY_PRODUCER ||
+        env->preset == STORAGE_CENTER ||
+        env->preset == PREMIUM_HPC
+    );
+
+    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
+        Agent* agent = env->agents + agent_idx;
+        agent->idx = agent_idx;
+        ClusterSpec* spec = &agent->cluster_spec;
+        assert(spec->node_capacity >= 0);
+        assert(spec->node_capacity_dr >= 0.0f);
+        assert(spec->tb_capacity >= 0);
+        assert(spec->tb_capacity_dr >= 0.0f);
+        assert(spec->kwh_capacity >= 0);
+        assert(spec->kwh_capacity_dr >= 0.0f);
+        assert(spec->kw_generation >= 0);
+        assert(spec->kw_generation_dr >= 0.0f);
+    }
+
 }
 
 Agent* select_buyer(Arkhai* env) {
@@ -228,97 +333,6 @@ Agent* select_buyer(Arkhai* env) {
 }
 
 
-void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
-    env->num_agents = env->num_agent_sellers + env->num_agent_buyers + env->num_heuristic_sellers + env->num_heuristic_buyers;
-    env->agents = calloc(env->num_agents, sizeof(Agent));
-
-    if (env->preset == ENERGY_PRODUCER) {
-        apply_energy_producer_preset(env);
-    } else if (env->preset == STORAGE_CENTER) {
-        apply_storage_center_preset(env);
-    } else if (env->preset == PREMIUM_HPC) {
-        apply_premium_hpc_preset(env);
-    } else {
-        int agent_idx = 0;
-        for (int i=0; i<env->num_agent_sellers; i++) {
-            env->agents[agent_idx].cluster_spec = seller_spec;
-            env->agents[agent_idx].is_heuristic = false;
-            env->agents[agent_idx].is_buyer = false;
-            agent_idx++;
-        }
-        for (int i=0; i<env->num_agent_buyers; i++) {
-            env->agents[agent_idx].cluster_spec = buyer_spec;
-            env->agents[agent_idx].is_heuristic = false;
-            env->agents[agent_idx].is_buyer = true;
-            agent_idx++;
-        }
-        for (int i=0; i<env->num_heuristic_sellers; i++) {
-            env->agents[agent_idx].cluster_spec = seller_spec;
-            env->agents[agent_idx].is_heuristic = true;
-            env->agents[agent_idx].is_buyer = false;
-            agent_idx++;
-        }
-        for (int i=0; i<env->num_heuristic_buyers; i++) {
-            env->agents[agent_idx].cluster_spec = buyer_spec;
-            env->agents[agent_idx].is_heuristic = true;
-            env->agents[agent_idx].is_buyer = true;
-            agent_idx++;
-        }
-    }
- 
-    NODE_PRICES[A100] = env->a100_node_price;
-    NODE_PRICES[H100] = env->h100_node_price;
-    NODE_ENERGY_KW[A100] = env->a100_node_energy_kw;
-    NODE_ENERGY_KW[H100] = env->h100_node_energy_kw;
-
-    // Sanity checks. These are here because it is easy to mess up init
-    assert(env->episode_length > 0);
-    assert(env->max_job_duration > 0);
-    assert(env->request_timeout > 0);
-    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        Agent* agent = env->agents + agent_idx;
-        agent->idx = agent_idx;
-        ClusterSpec* spec = &agent->cluster_spec;
-        assert(spec->node_capacity >= 0);
-        assert(spec->space_tb >= 0);
-        assert(spec->energy_gen >= 0);
-        assert(spec->energy_storage >= 0);
-        assert(spec->buy_price >= 0);
-        assert(spec->sell_price >= 0);
-        assert(spec->job_efficiency >= 0);
-        assert(spec->energy_gen_dr >= 0.0f);
-        assert(spec->energy_storage_dr >= 0.0f);
-        assert(spec->space_tb_dr >= 0.0f);
-        assert(spec->node_capacity_dr >= 0.0f);
-        assert(spec->buy_price_dr >= 0.0f);
-        assert(spec->sell_price_dr >= 0.0f);
-        assert(spec->job_efficiency_dr >= 0.0f);
-    }
-
-    assert(env->reward_scale > 0.0f);
-    assert(env->a100_node_price > 0.0f);
-    assert(env->a100_node_energy_kw > 0.0f);
-    assert(env->h100_node_price > 0.0f);
-    assert(env->h100_node_energy_kw > 0.0f);
-    assert(env->energy_demand_base > 0.0f);
-    assert(env->energy_price_base > 0.0f);
-    assert(env->energy_price_sensitivity > 0.0f);
-    assert(env->energy_demand_threshold > 0.0f);
-    assert(env->a1 != 0.0f);
-    assert(env->b1 != 0.0f);
-    assert(env->a2 != 0.0f);
-    assert(env->b2 != 0.0f);
-    assert(env->a3 != 0.0f);
-    assert(env->b3 != 0.0f);
-    assert(env->randomize_offset == 0 || env->randomize_offset == 1);
-    assert(
-        env->preset == NONE ||
-        env->preset == ENERGY_PRODUCER ||
-        env->preset == STORAGE_CENTER ||
-        env->preset == PREMIUM_HPC
-    );
-}
-
 // Relaxed from milestone 1 to support
 // storage centers with 0 nodes
 bool job_is_valid(Job job) {
@@ -327,11 +341,11 @@ bool job_is_valid(Job job) {
             return false;
         }
     }
-    return job.space_tb >= 0;
+    return job.tb_usage >= 0;
 }
 
 float job_price(Arkhai* env, Job* job) {
-    float price = env->space_tb_price*job->space_tb;
+    float price = env->tb_usage_price*job->space_tb;
     for (int i=0; i<NODE_TYPES; i++) {
         price += NODE_PRICES[i]*job->nodes[i];
     }
@@ -343,12 +357,12 @@ float job_price(Arkhai* env, Job* job) {
 // be replaced with a more realistic distribution.
 Job generate_request(Arkhai* env) {
     Job job = (Job) {
-        .space_tb = 0,
+        .tb_usage = 0,
         .start = env->tick,
         .duration = randomized(env->max_job_duration, env->job_duration_dr),
         .active = true,
         .negotiations = 0,
-        .space_tb = randomized(env->job_space_tb, env->job_space_tb_dr)
+        .tb_usage = randomized(env->job_space_tb, env->job_space_tb_dr)
     };
     for (int i=0; i<NODE_TYPES; i++) {
         job.nodes[i] = rand() % (env->max_nodes + 1);
@@ -359,7 +373,6 @@ Job generate_request(Arkhai* env) {
 
 void compute_observations(Arkhai* env) {
     int i = 0;
-    env->observations[i++] = (env->tick % 24) / 24.0f;
 
     // DO NOT ADD OR CHANGE INDEXING WITHOUT UPDATING BOTH BUYER AND SELLER CODE,
     // AS WELL AS THE OBS SIZE IN PYTHON. WE DO NOT HAVE A GOOD WAY TO AUTOMATICALLY
@@ -370,20 +383,21 @@ void compute_observations(Arkhai* env) {
     for (int agent_idx=0; agent_idx<num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
 
+        env->observations[i++] = (env->tick % 24) / 24.0f;
         for (int j=0; j<NODE_TYPES; j++) {
             env->observations[i++] = agent->nodes[j].total / ((float)env->max_nodes + 1);
             env->observations[i++] = agent->nodes[j].free / ((float)env->max_nodes + 1);
         }
-        env->observations[i++] = agent->space_tb / ((float)env->max_space_tb + 1);
-        env->observations[i++] = agent->free_space_tb / ((float)env->max_space_tb + 1);
-        env->observations[i++] = agent->energy / ((float)agent->energy_storage + 1);
-        env->observations[i++] = agent->energy_gen / ((float)agent->energy_gen + 1);
-        env->observations[i++] = agent->energy_storage / ((float)agent->energy_storage + 1);
+        env->observations[i++] = agent->tb_usage / ((float)env->max_space_tb + 1);
+        env->observations[i++] = agent->tb_capacity / ((float)env->max_tb_usage + 1);
+        env->observations[i++] = agent->kwh_storage / ((float)agent->kwh_capacity + 1);
+        env->observations[i++] = agent->kw_generation / ((float)agent->kwh_storage_gen + 1);
+        env->observations[i++] = agent->kwh_capacity / ((float)agent->kwh_storage_capacity + 1);
 
         for (int j=0; j<NODE_TYPES; j++) {
             env->observations[i++] = request->nodes[j] / ((float)env->max_nodes + 1);
         }
-        env->observations[i++] = request->space_tb / ((float)env->max_space_tb + 1);
+        env->observations[i++] = request->tb_usage / ((float)env->max_space_tb + 1);
         env->observations[i++] = request->start / ((float)env->max_job_duration + 1);
         env->observations[i++] = request->duration / ((float)env->max_job_duration + 1);
         env->observations[i++] = request->negotiations / ((float)env->request_timeout + 1);
@@ -413,12 +427,13 @@ void c_reset(Arkhai* env) {
             agent->request = generate_request(env);
         }
     }
+    env->serving = select_buyer(env);
     compute_observations(env);
 }
 
 bool can_accept_job(Arkhai* env, Agent* agent, Job* job) {
     Cluster* cluster = &agent->cluster;
-    if (job->space_tb > cluster->free_space_tb) {
+    if (job->tb_usage > cluster->tb_capacity) {
         return false;
     }
     for (int j=0; j<NODE_TYPES; j++) {
@@ -446,7 +461,7 @@ void accept_job(Arkhai* env, Job* job, int idx) {
         for (int j=0; j<NODE_TYPES; j++) {
             cluster->nodes[j].free -= job->nodes[j];
         }
-        cluster->free_space_tb -= job->space_tb;
+        cluster->tb_capacity -= job->tb_usage;
         return;
     }
 }
@@ -478,12 +493,12 @@ float calculate_price(float demand, float p0, float threshold, float c) {
 }
 
 float kw_price(Arkhai* env, float t) {
-    float demand = env->energy_demand_base + (
+    float demand = env->kwh_storage_demand_base + (
         env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
         env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
         env->a3*cosf(6.0f*PI*t/24.0f) + env->b3*sinf(6.0f*PI*t/24.0f));
-    float excess = fmaxf(0.0f, demand - env->energy_demand_threshold);
-    float price_mwh = env->energy_price_base + env->energy_price_sensitivity*powf(excess, 2.0f);
+    float excess = fmaxf(0.0f, demand - env->kwh_storage_demand_threshold);
+    float price_mwh = env->kwh_storage_price_base + env->kwh_storage_price_sensitivity*powf(excess, 2.0f);
     return 0.001f*price_mwh;
 }
 
@@ -502,7 +517,7 @@ void clear_finished_jobs(Arkhai* env) {
             for (int j=0; j<NODE_TYPES; j++) {
                 cluster->nodes[j].free += job.nodes[j];
             }
-            cluster->free_space_tb += job.space_tb;
+            cluster->tb_capacity += job.tb_usage;
             memset(&agent->jobs[i], 0, sizeof(Job));
         }
     }
@@ -520,21 +535,21 @@ void update_jobs(Arkhai* env) {
             }
 
             float kw = job_kw(env, job);
-            if (cluster->energy > kw) {
-                cluster->energy -= kw;
+            if (cluster->kwh_storage > kw) {
+                cluster->kwh_storage -= kw;
                 kw = 0;
             } else {
-                kw -= cluster->energy;
-                cluster->energy = 0;
+                kw -= cluster->kwh_storage;
+                cluster->kwh_storage = 0;
             }
 
-            float energy_cost = kw*kw_price(env, env->tick);
-            float profit = job.price - energy_cost;
+            float kwh_storage_cost = kw*kw_price(env, env->tick);
+            float profit = job.price - kwh_storage_cost;
             float buyer_savings = job_price(env, &job) - job.price;
 
             agent->profit += profit;
             agent->job_revenue += job.price;
-            agent->energy_expense += energy_cost;
+            agent->kwh_storage_expense += kwh_storage_cost;
 
             /*
             if (env->side == SELLER) {
@@ -564,9 +579,9 @@ void c_step(Arkhai* env) {
                 //env->log.buyer_spend += agent->buyer_spend;
                 //env->log.buyer_savings += agent->buyer_savings;
                 env->log.profit += agent->profit;
-                env->log.energy_expense += agent->energy_expense;
+                env->log.kwh_storage_expense += agent->kwh_storage_expense;
                 env->log.job_revenue += agent->job_revenue;
-                env->log.energy_revenue += agent->energy_revenue;
+                env->log.kwh_storage_revenue += agent->kwh_storage_revenue;
                 env->log.episode_length += env->tick;
                 env->log.episode_return += agent->episode_return;
                 env->log.n++;
@@ -622,12 +637,12 @@ void c_step(Arkhai* env) {
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
         Cluster* cluster = &agent->cluster;
-        cluster->energy += cluster->energy_gen;
-        if (cluster->energy > cluster->energy_storage) {
-            float diff = cluster->energy - cluster->energy_storage;
-            cluster->energy = cluster->energy_storage;
+        cluster->kwh_storage += cluster->kw_generation;
+        if (cluster->kwh_storage > cluster->kwh_capacity) {
+            float diff = cluster->kwh_storage - cluster->kwh_capacity;
+            cluster->kwh_storage = cluster->kwh_capacity;
             float profit = diff*kw_price(env, env->tick);
-            //cluster->energy_revenue += profit;
+            //cluster->kwh_storage_revenue += profit;
             //cluster->profit += profit;
             /*
             if (env->side == SELLER) {
@@ -639,14 +654,14 @@ void c_step(Arkhai* env) {
 
     update_jobs(env);
 
-    // Sell energy
+    // Sell kwh_storage
     /*
     if (env->actions[1] > 0 && env->side == SELLER) {
-        float amt = 0.5f * env->energy;
+        float amt = 0.5f * env->kwh_storage;
         float profit = amt*kw_price(env, env->tick);
-        env->energy_revenue += profit;
+        env->kwh_storage_revenue += profit;
         env->profit += profit;
-        env->energy -= amt;
+        env->kwh_storage -= amt;
         env->rewards[0] += profit;
     }
     */
