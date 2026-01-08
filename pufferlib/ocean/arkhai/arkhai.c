@@ -7,10 +7,12 @@ int main() {
         .job_duration=100,
         .job_duration_dr=0.2,
         .request_timeout=5,
-        .scripted_buy_price_dr=0.2,
-        .scripted_sell_price_dr=0.2,
+        .scripted_buy_price_dr=0.0,
+        .scripted_sell_price_dr=0.0,
         .job_efficiency=0.8,
         .job_efficiency_dr=0.2,
+        .job_tb_usage=100,
+        .job_nodes=10,
         .reward_scale=0.0001,
         .tb_price=0.03,
         .a100_price=5.31,
@@ -29,20 +31,21 @@ int main() {
         .b3=18.9,
         .randomize_offset=1,
         .preset=NONE,
-        .ai_sellers=1,
-        .ai_buyers=1,
-        .scripted_sellers=0,
-        .scripted_buyers=0,
+        .ai_sellers=0,
+        .ai_buyers=0,
+        .scripted_sellers=1,
+        .scripted_buyers=1,
+        .debug=true,
     };
     ClusterSpec seller_spec = {
         .node_capacity = 100,
-        .node_capacity_dr = 0.2,
+        .node_capacity_dr = 0.0,
         .tb_capacity = 10000,
-        .tb_capacity_dr = 0.2,
+        .tb_capacity_dr = 0.0,
         .kwh_capacity = 1000,
-        .kwh_capacity_dr = 0.2,
+        .kwh_capacity_dr = 0.0,
         .kw_generation = 100,
-        .kw_generation_dr = 0.2,
+        .kw_generation_dr = 0.0,
     };
     ClusterSpec buyer_spec = {0};
 
@@ -58,14 +61,15 @@ int main() {
 
     c_reset(&env);
     for (int i=0; i<10000000; i++) {
-        env.actions[0] = 1;
-        env.actions[1] = 1;
+        //env.actions[0] = 1;
+        //env.actions[1] = 1;
         c_step(&env);
-        if (env.terminals[0]) {
-            c_reset(&env);
-        }
+        //if (env.terminals[0]) {
+        //    c_reset(&env);
+        //}
     }
     float n = env.log.n;
+    /*
     printf("N: %f\n", n);
     printf("Profit: %f\n", env.log.profit/n);
     printf("Buyer Spend: %f\n", env.log.buyer_spend/n);
@@ -75,6 +79,7 @@ int main() {
     printf("Energy Expense: %f\n", env.log.energy_expense/n);
     printf("Episode Length: %f\n", env.log.episode_length/n);
     printf("Episode Return: %f\n", env.log.episode_return/n);
+    */
  
     free(env.observations);
     free(env.actions);

@@ -22,12 +22,8 @@ float NODE_ENERGY_KW[] = {0, 0};
 
 typedef struct {
     float score;
-    float buyer_spend;
-    float buyer_savings;
+    float expense;
     float profit;
-    float job_revenue;
-    float energy_revenue;
-    float energy_expense;
     float episode_length;
     float episode_return;
     float n;
@@ -136,6 +132,7 @@ typedef struct {
     int randomize_offset;
     int preset;
     int serving;
+    bool debug;
 } Arkhai;
 
 enum PRESET {
@@ -515,33 +512,42 @@ void update_jobs(Arkhai* env) {
 
         }
         
-        env->rewards[0] += reward;
+        //env->rewards[0] += reward;
     }
 } 
 
 void c_step(Arkhai* env) {
-    env->rewards[0] = 0;
-    env->terminals[0] = 0;
+    int ai_agents = env->ai_sellers + env->ai_buyers;
+    memset(env->rewards, 0, ai_agents*sizeof(float));
+    memset(env->terminals, 0, ai_agents*sizeof(unsigned char));
 
     if (env->tick >= env->episode_length) {
         for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
             Agent* agent = env->agents + agent_idx;
-            if (agent->is_heuristic) {
-
-            } else {
-                float job_profit = agent->job_revenue - agent->job_expense;
-                float energy_profit = agent->energy_revenue - agent->energy_expense;
-                env->log.score += job_profit + energy_profit;
-                env->log.profit += job_profit + energy_profit;
-                // Job rev/expense for buyer/seller?
-                env->log.job_revenue += agent->job_revenue;
-                env->log.energy_revenue += agent->energy_revenue;
-                env->log.energy_expense += agent->energy_expense;
-                env->log.episode_length += env->tick;
-                env->log.episode_return += agent->episode_return;
-                env->log.n++;
-                env->terminals[agent_idx] = 1;
+            if (env->debug) {
+                printf("Agent %d\n", agent_idx);
+                printf("\tIs Heuristic: %d\n", agent->is_heuristic);
+                printf("\tIs Buyer: %d\n", agent->is_buyer);
+                printf("\tJob Revenue: %f\n", agent->job_revenue);
+                printf("\tJob Expense: %f\n", agent->job_expense);
+                printf("\tEnergy Revenue: %f\n", agent->energy_revenue);
+                printf("\tEnergy Expense: %f\n", agent->energy_expense);
+                printf("\tEpisode Return: %f\n", agent->episode_return);
             }
+
+            if (agent->is_heuristic) {
+                continue;
+            }
+
+            float job_profit = agent->job_revenue - agent->job_expense;
+            float energy_profit = agent->energy_revenue - agent->energy_expense;
+            env->log.profit += job_profit + energy_profit;
+            env->log.expense += agent->job_expense + agent->energy_expense;
+            env->log.score += job_profit + energy_profit;
+            env->log.episode_length += env->tick;
+            env->log.episode_return += agent->episode_return;
+            env->log.n++;
+            env->terminals[agent_idx] = 1;
         }
         c_reset(env);
     }
@@ -554,9 +560,15 @@ void c_step(Arkhai* env) {
     float base_price = job_price(env, request);
     int request_idx = serving;
 
-    // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
-    float price_mul = 1.0f + ((float)env->actions[2*request_idx] - 4.0f)/20.0f;
-    float request_price = price_mul * base_price;
+    Agent* buyer = &env->agents[request_idx];
+    float request_price;
+    if (buyer->is_heuristic) {
+        request_price = buyer_response(env, *request, base_price);
+    } else {
+        // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
+        float price_mul = 1.0f + ((float)env->actions[2*request_idx] - 4.0f)/20.0f;
+        request_price = price_mul * base_price;
+    }
 
     int best_idx = -1;
     float best_response_price = -1.0f;
@@ -566,13 +578,18 @@ void c_step(Arkhai* env) {
             response_prices[agent_idx] = 0.0f;
             continue;
         }
-        Agent* agent = &env->agents[agent_idx];
-        if (!can_accept_job(env, agent, request)) {
+        Agent* seller = &env->agents[agent_idx];
+        if (!can_accept_job(env, seller, request)) {
             response_prices[agent_idx] = 0.0f;
             continue;
         }
-        price_mul = 1.0f + ((float)env->actions[2*agent_idx+1] - 4.0f)/20.0f;
-        float offer_price = price_mul * base_price;
+        float offer_price;
+        if (seller->is_heuristic) {
+            offer_price = seller_response(env, *request, base_price);
+        } else {
+            float price_mul = 1.0f + ((float)env->actions[2*agent_idx+1] - 4.0f)/20.0f;
+            offer_price = price_mul * base_price;
+        }
         if (offer_price >= best_response_price) {
             best_idx = agent_idx;
             best_response_price = offer_price;
@@ -623,6 +640,7 @@ void c_step(Arkhai* env) {
     // Scale and clip rewards
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
+        /*
         float reward = env->rewards[agent_idx];
         reward *= env->reward_scale;
         assert(reward >= -1.0f);
@@ -632,6 +650,7 @@ void c_step(Arkhai* env) {
         agent->episode_return += reward;
         agent->request = generate_request(env);
         agent->prev_reward = reward;
+        */
     }
     compute_observations(env);
 }
