@@ -481,7 +481,6 @@ void clear_finished_jobs(Arkhai* env) {
 }
 
 void update_jobs(Arkhai* env) {
-    float reward = 0;
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
         Cluster* cluster = &agent->cluster;
@@ -505,9 +504,6 @@ void update_jobs(Arkhai* env) {
             }
 
             float energy_expense = kw*kw_price(env, env->tick);
-            float profit = job.price - energy_expense;
-            float buyer_savings = job_price(env, &job) - job.price;
-
 
             agent->job_revenue += job.price;
             agent->energy_expense += energy_expense;
@@ -576,12 +572,12 @@ void c_step(Arkhai* env) {
     Agent* seller;
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         if (agent_idx == request_idx) {
-            response_prices[agent_idx] = 0.0f;
+            response_prices[agent_idx] = FLT_MAX;
             continue;
         }
         seller = &env->agents[agent_idx];
         if (!can_accept_job(env, seller, request)) {
-            response_prices[agent_idx] = 0.0f;
+            response_prices[agent_idx] = FLT_MAX;
             continue;
         }
         float offer_price;
@@ -608,6 +604,7 @@ void c_step(Arkhai* env) {
             env->rewards[request_idx] += buyer_revenue - buyer_expense;
         }
 
+        seller = &env->agents[best_idx];
         float seller_revenue = best_response_price*request->duration;
         // This is a bad estimate
         float seller_expense = job_kw(env, *request)*kw_price(env, env->tick)*request->duration;
@@ -617,7 +614,7 @@ void c_step(Arkhai* env) {
         if (!seller->is_heuristic) {
             env->rewards[best_idx] += seller_revenue - seller_expense;
         }
-
+        buyer->request = generate_request(env);
     } else if (request->negotiations < env->request_timeout) {
         compute_observations(env);
         return;
@@ -625,6 +622,7 @@ void c_step(Arkhai* env) {
 
     env->tick++;
     clear_finished_jobs(env);
+    buyer->request = generate_request(env);
 
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = &env->agents[agent_idx];
