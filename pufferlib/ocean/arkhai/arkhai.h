@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <assert.h>
+#include <float.h>
 #include "raylib.h"
 
 #define MAX_JOBS 100
@@ -84,6 +85,7 @@ typedef struct {
     float energy_expense;
     float prev_reward;
     float episode_return;
+    int filled_jobs;
     bool is_heuristic;
     bool is_buyer;
 } Agent;
@@ -111,7 +113,9 @@ typedef struct {
     float job_tb_usage_dr;
     float job_efficiency;
     float job_efficiency_dr;
+    float scripted_sell_price;
     float scripted_sell_price_dr;
+    float scripted_buy_price;
     float scripted_buy_price_dr;
     float reward_scale;
     float tb_price;
@@ -238,7 +242,9 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     assert(env->job_duration_dr >= 0.0f);
     assert(env->job_tb_usage >= 0);
     assert(env->job_tb_usage_dr >= 0.0f);
+    assert(env->scripted_sell_price > 0.0f);
     assert(env->scripted_sell_price_dr >= 0.0f);
+    assert(env->scripted_buy_price > 0.0f);
     assert(env->scripted_buy_price_dr >= 0.0f);
     assert(env->reward_scale > 0.0f);
     assert(env->tb_price >= 0.0f);
@@ -429,12 +435,12 @@ float job_kw(Arkhai* env, Job job) {
 // These two fns are simple responses for single-side sims. Ideally, you'd match them to
 // the distribution of real-world demand to first order + heavy randomization.
 float buyer_response(Arkhai* env, Job request, float offer_price) {
-    float rng = randomized(1.0, env->scripted_buy_price_dr);
+    float rng = randomized(env->scripted_buy_price, env->scripted_buy_price_dr);
     return rng * job_price(env, &request);
 }
 
 float seller_response(Arkhai* env, Job request, float offer_price) {
-    float rng = randomized(1.0, env->scripted_sell_price_dr);
+    float rng = randomized(env->scripted_sell_price, env->scripted_sell_price_dr);
     return rng * job_price(env, &request);
 }
 
@@ -480,6 +486,10 @@ void update_jobs(Arkhai* env) {
         Agent* agent = env->agents + agent_idx;
         Cluster* cluster = &agent->cluster;
         for (int i=0; i<MAX_JOBS; i++) {
+            if (agent->is_buyer) {
+                continue;
+            }
+
             Job job = agent->jobs[i];
             if (!job.active) {
                 continue;
@@ -495,24 +505,13 @@ void update_jobs(Arkhai* env) {
             }
 
             float energy_expense = kw*kw_price(env, env->tick);
-            //float profit = job.price - energy_expense;
-            //float buyer_savings = job_price(env, &job) - job.price;
+            float profit = job.price - energy_expense;
+            float buyer_savings = job_price(env, &job) - job.price;
 
-            //agent->profit += profit;
+
             agent->job_revenue += job.price;
             agent->energy_expense += energy_expense;
-
-            /*
-            if (env->side == SELLER) {
-                reward += profit;
-            } else {
-                reward += buyer_savings;
-            }
-            */
-
         }
-        
-        //env->rewards[0] += reward;
     }
 } 
 
@@ -530,6 +529,7 @@ void c_step(Arkhai* env) {
                 printf("\tIs Buyer: %d\n", agent->is_buyer);
                 printf("\tJob Revenue: %f\n", agent->job_revenue);
                 printf("\tJob Expense: %f\n", agent->job_expense);
+                printf("\tFilled Jobs: %d\n", agent->filled_jobs);
                 printf("\tEnergy Revenue: %f\n", agent->energy_revenue);
                 printf("\tEnergy Expense: %f\n", agent->energy_expense);
                 printf("\tEpisode Return: %f\n", agent->episode_return);
@@ -571,14 +571,15 @@ void c_step(Arkhai* env) {
     }
 
     int best_idx = -1;
-    float best_response_price = -1.0f;
+    float best_response_price = FLT_MAX;
     float response_prices[env->num_agents];
+    Agent* seller;
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         if (agent_idx == request_idx) {
             response_prices[agent_idx] = 0.0f;
             continue;
         }
-        Agent* seller = &env->agents[agent_idx];
+        seller = &env->agents[agent_idx];
         if (!can_accept_job(env, seller, request)) {
             response_prices[agent_idx] = 0.0f;
             continue;
@@ -590,13 +591,33 @@ void c_step(Arkhai* env) {
             float price_mul = 1.0f + ((float)env->actions[2*agent_idx+1] - 4.0f)/20.0f;
             offer_price = price_mul * base_price;
         }
-        if (offer_price >= best_response_price) {
+        if (offer_price <= best_response_price) {
             best_idx = agent_idx;
             best_response_price = offer_price;
         }
     }
-    if (best_response_price >= request_price) {
+    if (best_response_price <= request_price) {
         accept_job(env, request, best_idx);
+
+        float buyer_revenue = job_price(env, request)*request->duration;
+        float buyer_expense = best_response_price*request->duration;
+        buyer->job_revenue += buyer_revenue;
+        buyer->job_expense += buyer_expense;
+        buyer->filled_jobs++;
+        if (!buyer->is_heuristic) {
+            env->rewards[request_idx] += buyer_revenue - buyer_expense;
+        }
+
+        float seller_revenue = best_response_price*request->duration;
+        // This is a bad estimate
+        float seller_expense = job_kw(env, *request)*kw_price(env, env->tick)*request->duration;
+        seller->job_revenue += seller_revenue;
+        seller->energy_expense += seller_expense;
+        seller->filled_jobs++;
+        if (!seller->is_heuristic) {
+            env->rewards[best_idx] += seller_revenue - seller_expense;
+        }
+
     } else if (request->negotiations < env->request_timeout) {
         compute_observations(env);
         return;
@@ -606,20 +627,18 @@ void c_step(Arkhai* env) {
     clear_finished_jobs(env);
 
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        Agent* agent = env->agents + agent_idx;
+        Agent* agent = &env->agents[agent_idx];
         Cluster* cluster = &agent->cluster;
         cluster->kwh_storage += cluster->kw_generation;
-        if (cluster->kwh_storage > cluster->kwh_capacity) {
-            //float diff = cluster->kwh_storage - cluster->kwh_capacity;
-            //cluster->kwh_storage = cluster->kwh_capacity;
-            //float profit = diff*kw_price(env, env->tick);
-            //cluster->kwh_storage_revenue += profit;
-            //cluster->profit += profit;
-            /*
-            if (env->side == SELLER) {
-                env->rewards[0] += profit;
-            }
-            */
+        if (cluster->kwh_storage <= cluster->kwh_capacity) {
+            continue;
+        }
+        float diff = cluster->kwh_storage - cluster->kwh_capacity;
+        cluster->kwh_storage = cluster->kwh_capacity;
+        float energy_revenue = diff*kw_price(env, env->tick);
+        agent->energy_revenue += energy_revenue;
+        if (!agent->is_heuristic) {
+            env->rewards[agent_idx] += energy_revenue;
         }
     }
 
@@ -679,4 +698,5 @@ void c_close(Arkhai* env) {
     if (IsWindowReady()) {
         CloseWindow();
     }
+    free(env->agents);
 }

@@ -3,14 +3,16 @@
 int main() {
     Arkhai env = {
         .tick=0,
-        .episode_length=1000,
-        .job_duration=100,
-        .job_duration_dr=0.2,
+        .episode_length=100,
+        .job_duration=10,
+        .job_duration_dr=0.0,
         .request_timeout=5,
+        .scripted_buy_price=1.1,
+        .scripted_sell_price=0.9,
         .scripted_buy_price_dr=0.0,
         .scripted_sell_price_dr=0.0,
-        .job_efficiency=0.8,
-        .job_efficiency_dr=0.2,
+        .job_efficiency=1.0,
+        .job_efficiency_dr=0.0,
         .job_tb_usage=100,
         .job_nodes=10,
         .reward_scale=0.0001,
@@ -38,7 +40,7 @@ int main() {
         .debug=true,
     };
     ClusterSpec seller_spec = {
-        .node_capacity = 100,
+        .node_capacity = 10,
         .node_capacity_dr = 0.0,
         .tb_capacity = 10000,
         .tb_capacity_dr = 0.0,
@@ -60,7 +62,7 @@ int main() {
     env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
 
     c_reset(&env);
-    for (int i=0; i<10000000; i++) {
+    for (int i=0; i<100; i++) {
         //env.actions[0] = 1;
         //env.actions[1] = 1;
         c_step(&env);
