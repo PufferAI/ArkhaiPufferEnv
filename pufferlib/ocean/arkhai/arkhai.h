@@ -256,12 +256,6 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     assert(env->kwh_price_base >= 0.0f);
     assert(env->kwh_price_sensitivity >= 0.0f);
     assert(env->kwh_demand_threshold >= 0.0f);
-    assert(env->a1 != 0.0f);
-    assert(env->b1 != 0.0f);
-    assert(env->a2 != 0.0f);
-    assert(env->b2 != 0.0f);
-    assert(env->a3 != 0.0f);
-    assert(env->b3 != 0.0f);
 
     // TODO: Needed?
     assert(env->randomize_offset == 0 || env->randomize_offset == 1);
@@ -365,7 +359,7 @@ void compute_observations(Arkhai* env) {
 void c_reset(Arkhai* env) {
     // This is for first-time reset. Staggering improves training stability.
     if (env->randomize_offset && env->tick == 0) {
-        env->tick = rand()%env->episode_length;
+        env->tick = 0 + rand()%env->episode_length;
     } else {
         env->tick = 0;
     }
@@ -377,6 +371,13 @@ void c_reset(Arkhai* env) {
 
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
+        agent->job_revenue = 0.0f;
+        agent->job_expense = 0.0f;
+        agent->energy_revenue = 0.0f;
+        agent->energy_expense = 0.0f;
+        agent->prev_reward = 0.0f;
+        agent->episode_return = 0.0f;
+        agent->filled_jobs = 0;
         init_cluster(&agent->cluster, &agent->cluster_spec);
         memset(agent->jobs, 0, MAX_JOBS*sizeof(Job));
         if (agent->is_buyer) {
@@ -455,8 +456,7 @@ float kw_price(Arkhai* env, float t) {
         env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
         env->a3*cosf(6.0f*PI*t/24.0f) + env->b3*sinf(6.0f*PI*t/24.0f));
     float excess = fmaxf(0.0f, demand - env->kwh_demand_threshold);
-    float price_mwh = env->kwh_price_base + env->kwh_price_sensitivity*powf(excess, 2.0f);
-    return 0.001f*price_mwh;
+    return env->kwh_price_base + env->kwh_price_sensitivity*powf(excess, 2.0f);
 }
 
 void clear_finished_jobs(Arkhai* env) {
@@ -505,7 +505,8 @@ void update_jobs(Arkhai* env) {
 
             float energy_expense = kw*kw_price(env, env->tick);
 
-            agent->job_revenue += job.price;
+            // We are now recognizing revenue upfront
+            //agent->job_revenue += job.price;
             agent->energy_expense += energy_expense;
         }
     }
@@ -546,6 +547,7 @@ void c_step(Arkhai* env) {
             env->terminals[agent_idx] = 1;
         }
         c_reset(env);
+        return;
     }
 
     int serving = env->serving;
@@ -569,6 +571,7 @@ void c_step(Arkhai* env) {
     int best_idx = -1;
     float best_response_price = FLT_MAX;
     float response_prices[env->num_agents];
+    bool exists_valid_buyer = false; // We skip negotiation if nobody has capacity
     Agent* seller;
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         if (agent_idx == request_idx) {
@@ -580,11 +583,12 @@ void c_step(Arkhai* env) {
             response_prices[agent_idx] = FLT_MAX;
             continue;
         }
+        exists_valid_buyer = true;
         float offer_price;
         if (seller->is_heuristic) {
             offer_price = seller_response(env, *request, base_price);
         } else {
-            float price_mul = 1.0f + ((float)env->actions[2*agent_idx+1] - 4.0f)/20.0f;
+            float price_mul = 1.0f + ((float)env->actions[2*agent_idx] - 4.0f)/20.0f;
             offer_price = price_mul * base_price;
         }
         if (offer_price <= best_response_price) {
@@ -592,7 +596,9 @@ void c_step(Arkhai* env) {
             best_response_price = offer_price;
         }
     }
-    if (best_response_price <= request_price) {
+    if (!exists_valid_buyer) {
+        // Skip negotiation
+    } else if (best_response_price <= request_price) {
         accept_job(env, request, best_idx);
 
         float buyer_revenue = job_price(env, request)*request->duration;
@@ -656,7 +662,7 @@ void c_step(Arkhai* env) {
 
     // Scale and clip rewards
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        Agent* agent = env->agents + agent_idx;
+        //Agent* agent = env->agents + agent_idx;
         /*
         float reward = env->rewards[agent_idx];
         reward *= env->reward_scale;
