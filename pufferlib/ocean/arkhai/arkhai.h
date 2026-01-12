@@ -113,10 +113,10 @@ typedef struct {
     float job_tb_usage_dr;
     float job_efficiency;
     float job_efficiency_dr;
-    float scripted_sell_price;
-    float scripted_sell_price_dr;
     float scripted_buy_price;
     float scripted_buy_price_dr;
+    float scripted_sell_price;
+    float scripted_sell_price_dr;
     float reward_scale;
     float tb_price;
     float a100_price;
