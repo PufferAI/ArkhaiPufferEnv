@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     int nodes[NODE_TYPES];
-    int tb_usage;
+    float tb_usage;
     int duration;
     int start;
     bool active;
@@ -106,7 +106,7 @@ typedef struct {
     int episode_length;
     int request_timeout;
     int job_nodes;
-    int job_nodes_dr;
+    float job_nodes_dr;
     int job_duration;
     float job_duration_dr;
     float job_tb_usage;
@@ -196,7 +196,13 @@ void apply_premium_hpc_preset(Arkhai* env) {
 */
 
 void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
-    env->num_agents = env->ai_sellers + env->ai_buyers + env->scripted_sellers + env->scripted_buyers;
+    int num_buyers = env->ai_buyers + env->scripted_buyers;
+    assert(num_buyers > 0);
+
+    int num_sellers = env->ai_sellers + env->scripted_sellers;
+    assert(num_sellers > 0);
+    
+    env->num_agents = num_buyers + num_sellers;
     env->agents = calloc(env->num_agents, sizeof(Agent));
 
     int agent_idx = 0;
@@ -363,11 +369,6 @@ void c_reset(Arkhai* env) {
     } else {
         env->tick = 0;
     }
-
-    if (env->randomize_offset) {
-        env->tick = randomized(env->job_duration, env->job_duration_dr);
-    }
-
 
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
@@ -648,33 +649,27 @@ void c_step(Arkhai* env) {
 
     update_jobs(env);
 
-    // Sell kwh_storage
-    /*
-    if (env->actions[1] > 0 && env->side == SELLER) {
-        float amt = 0.5f * env->kwh_storage;
-        float profit = amt*kw_price(env, env->tick);
-        env->kwh_storage_revenue += profit;
-        env->profit += profit;
-        env->kwh_storage -= amt;
-        env->rewards[0] += profit;
-    }
-    */
+    for (int agent_idx=0; agent_idx<ai_agents; agent_idx++) {
+        Agent* agent = &env->agents[agent_idx];
+        Cluster* cluster = &agent->cluster;
 
-    // Scale and clip rewards
-    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        //Agent* agent = env->agents + agent_idx;
-        /*
+        // Sell energy
+        if (env->actions[2*agent_idx + 1] > 0) {
+            float amt = 0.5f * cluster->kwh_storage;
+            float profit = amt*kw_price(env, env->tick);
+            cluster->kwh_storage -= amt;
+            agent->energy_revenue += profit;
+            env->rewards[agent_idx] += profit;
+        }
+     
+        // Scale rewards
         float reward = env->rewards[agent_idx];
         reward *= env->reward_scale;
-        assert(reward >= -1.0f);
-        assert(reward <= 1.0f);
         env->rewards[agent_idx] = reward;
-
         agent->episode_return += reward;
-        agent->request = generate_request(env);
         agent->prev_reward = reward;
-        */
     }
+
     compute_observations(env);
 }
 

@@ -1,5 +1,60 @@
 #include "arkhai.h"
 
+Arkhai create_train_env() {
+    return (Arkhai) {
+        .tick=0,
+        .ai_sellers=1,
+        .ai_buyers=0,
+        .scripted_sellers=0,
+        .scripted_buyers=1,
+        .episode_length=100,
+        .request_timeout=5,
+        .job_nodes=10,
+        .job_nodes_dr=0.2,
+        .job_duration=10,
+        .job_duration_dr=0.2,
+        .job_tb_usage=0.2,
+        .job_tb_usage_dr=0.2,
+        .job_efficiency=0.8,
+        .job_efficiency_dr=0.2,
+        .scripted_buy_price=0.9,
+        .scripted_buy_price_dr=0.2,
+        .scripted_sell_price=0.9,
+        .scripted_sell_price_dr=0.2,
+        .reward_scale=0.0001,
+        .tb_price=0.03,
+        .a100_price=5.31,
+        .a100_kw=6.5,
+        .h100_price=15.92,
+        .h100_kw=10.0,
+        .energy_demand_base=1500.0,
+        .kwh_price_base=0.02,
+        .kwh_price_sensitivity=0.0000001,
+        .kwh_demand_threshold=1400,
+        .a1=-374,
+        .b1=-387,
+        .a2=-4.6,
+        .b2=-17.1,
+        .a3=3.2,
+        .b3=18.9,
+        .debug=false,
+    };
+}
+
+ClusterSpec create_train_spec() {
+    return (ClusterSpec) {
+        .node_capacity = 100,
+        .node_capacity_dr = 0.2,
+        .tb_capacity = 100,
+        .tb_capacity_dr = 0.2,
+        .kwh_capacity = 100,
+        .kwh_capacity_dr = 0.2,
+        .kw_generation = 10,
+        .kw_generation_dr = 0.2,
+    };
+}
+
+
 Arkhai create_test_env() {
     return (Arkhai) {
         .tick=0,
@@ -143,5 +198,37 @@ int main() {
     free(env.rewards);
     free(env.terminals);
     c_close(&env);
-    printf("Passed bilateral agent negotiation\n");
+    printf("Passed bilateral agent negotiation\n\n");
+
+    // Training environment
+    printf("Mirrored training environment\n");
+    env = create_train_env();
+    seller_spec = create_train_spec();
+    buyer_spec = (ClusterSpec){0};
+    num_agents = env.ai_buyers + env.ai_sellers;
+    init(&env, buyer_spec, seller_spec);
+    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
+    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
+    env.rewards = (float*)calloc(num_agents, sizeof(float));
+    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    c_reset(&env);
+    for (int i=0; i<1000000; i++) {
+        env.actions[0] = 2;
+        c_step(&env);
+    }
+    printf("\tProfit: %f\n", env.log.profit / env.log.n);
+    printf("\tExpense: %f\n", env.log.expense / env.log.n);
+    printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
+    printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
+    printf("\tN: %f\n", env.log.n);
+    //assert(env.agents[0].job_revenue == 950.0f && "Bilateral negotiation seller incorrect revenue");
+    //assert(env.agents[1].job_revenue == 1000.0f && "Bilateral negotiation buyer incorrect revenue");
+    //assert(env.agents[1].job_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
+    c_step(&env);
+    free(env.observations);
+    free(env.actions);
+    free(env.rewards);
+    free(env.terminals);
+    c_close(&env);
+    printf("Finished mirrored training environment\n");
 }
