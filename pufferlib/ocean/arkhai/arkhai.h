@@ -7,19 +7,20 @@
 #include "raylib.h"
 
 #define MAX_JOBS 100
-#define NODE_TYPES 2
 
-#define NUM_OBS 18
+#define NUM_OBS 21
 #define NUM_ACT 2
 
 typedef struct {
     int price;
     int kwh_storage; } NodeSpec;
+
 const int A100 = 0;
 const int H100 = 1;
-
-float NODE_PRICES[] = {0, 0};
-float NODE_ENERGY_KW[] = {0, 0};
+const int R5090 = 2;
+#define NODE_TYPES 3
+float NODE_PRICES[] = {0, 0, 0};
+float NODE_ENERGY_KW[] = {0, 0, 0};
 
 typedef struct {
     float score;
@@ -64,8 +65,8 @@ typedef struct {
 } Cluster;
 
 typedef struct {
-    int node_capacity;
-    float node_capacity_dr;
+    int node_capacity[NODE_TYPES];
+    float node_capacity_dr[NODE_TYPES];
     int tb_capacity;
     float tb_capacity_dr;
     float kwh_capacity;
@@ -80,7 +81,7 @@ typedef struct {
     Job jobs[MAX_JOBS];
     Job request;
     float job_revenue;
-    float job_expense;
+    float compute_expense;
     float energy_revenue;
     float energy_expense;
     float prev_reward;
@@ -105,8 +106,8 @@ typedef struct {
     int tick;
     int episode_length;
     int request_timeout;
-    int job_nodes;
-    float job_nodes_dr;
+    int job_nodes[NODE_TYPES];
+    float job_nodes_dr[NODE_TYPES];
     int job_duration;
     float job_duration_dr;
     float job_tb_usage;
@@ -123,6 +124,8 @@ typedef struct {
     float a100_kw;
     float h100_price;
     float h100_kw;
+    float r5090_price;
+    float r5090_kw;
     float energy_demand_base;
     float kwh_price_base;
     float kwh_price_sensitivity;
@@ -166,7 +169,9 @@ void init_cluster(Cluster* cluster, ClusterSpec* spec) {
     cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
     cluster->tb_capacity = randomized(spec->tb_capacity, spec->tb_capacity_dr);
     for (int i=0; i<NODE_TYPES; i++) {
-        cluster->nodes[i].total = randomized(spec->node_capacity, spec->node_capacity_dr);
+        int capacityy = spec->node_capacity[i];
+        float capacity_dr = spec->node_capacity_dr[i];
+        cluster->nodes[i].total = randomized(capacityy, capacity_dr);
         cluster->nodes[i].free = cluster->nodes[i].total;
     }
 }
@@ -233,8 +238,10 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
 
     NODE_PRICES[A100] = env->a100_price;
     NODE_PRICES[H100] = env->h100_price;
+    NODE_PRICES[R5090] = env->r5090_price;
     NODE_ENERGY_KW[A100] = env->a100_kw;
     NODE_ENERGY_KW[H100] = env->h100_kw;
+    NODE_ENERGY_KW[R5090] = env->r5090_kw;
 
     // Sanity checks. These are here because it is easy to mess up init
     assert(env->ai_sellers >= 0);
@@ -258,6 +265,8 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     assert(env->a100_kw > 0.0f);
     assert(env->h100_price >= 0.0f);
     assert(env->h100_kw > 0.0f);
+    assert(env->r5090_price >= 0.0f);
+    assert(env->r5090_kw > 0.0f);
     assert(env->energy_demand_base >= 0.0f);
     assert(env->kwh_price_base >= 0.0f);
     assert(env->kwh_price_sensitivity >= 0.0f);
@@ -265,12 +274,12 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
 
     // TODO: Needed?
     assert(env->randomize_offset == 0 || env->randomize_offset == 1);
-
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        Agent* agent = env->agents + agent_idx;
-        ClusterSpec* spec = &agent->cluster_spec;
-        assert(spec->node_capacity >= 0);
-        assert(spec->node_capacity_dr >= 0.0f);
+        ClusterSpec* spec = &env->agents[agent_idx].cluster_spec;
+        for (int i=0; i<NODE_TYPES; i++) {
+            assert(spec->node_capacity[i] >= 0);
+            assert(spec->node_capacity_dr[i] >= 0.0f);
+        }
         assert(spec->tb_capacity >= 0);
         assert(spec->tb_capacity_dr >= 0.0f);
         assert(spec->kwh_capacity >= 0);
@@ -321,7 +330,9 @@ Job generate_request(Arkhai* env) {
         .negotiations = 0,
     };
     for (int i=0; i<NODE_TYPES; i++) {
-        job.nodes[i] = randomized(env->job_nodes, env->job_nodes_dr);
+        int nodes = env->job_nodes[i];
+        float nodes_dr = env->job_nodes_dr[i];
+        job.nodes[i] = randomized(nodes, nodes_dr);
     }
     job.price = job_price(env, &job);
     return job;
@@ -341,8 +352,8 @@ void compute_observations(Arkhai* env) {
 
         env->observations[i++] = (env->tick % 24) / 24.0f;
         for (int j=0; j<NODE_TYPES; j++) {
-            env->observations[i++] = cluster->nodes[j].total / ((float)env->job_nodes + 1);
-            env->observations[i++] = cluster->nodes[j].free / ((float)env->job_nodes + 1);
+            env->observations[i++] = cluster->nodes[j].total / ((float)env->job_nodes[j] + 1);
+            env->observations[i++] = cluster->nodes[j].free / ((float)env->job_nodes[j] + 1);
         }
         env->observations[i++] = cluster->tb_usage / ((float)env->job_tb_usage + 1);
         env->observations[i++] = cluster->tb_capacity / ((float)env->job_tb_usage + 1);
@@ -351,7 +362,7 @@ void compute_observations(Arkhai* env) {
         env->observations[i++] = cluster->kwh_capacity / ((float)cluster->kwh_capacity + 1);
         env->observations[i++] = cluster->kw_generation / ((float)cluster->kwh_capacity + 1);
         for (int j=0; j<NODE_TYPES; j++) {
-            env->observations[i++] = request->nodes[j] / ((float)env->job_nodes + 1);
+            env->observations[i++] = request->nodes[j] / ((float)env->job_nodes[j] + 1);
         }
         env->observations[i++] = request->tb_usage / ((float)env->job_tb_usage + 1);
         env->observations[i++] = request->start / ((float)env->job_duration + 1);
@@ -373,7 +384,7 @@ void c_reset(Arkhai* env) {
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
         agent->job_revenue = 0.0f;
-        agent->job_expense = 0.0f;
+        agent->compute_expense = 0.0f;
         agent->energy_revenue = 0.0f;
         agent->energy_expense = 0.0f;
         agent->prev_reward = 0.0f;
@@ -420,6 +431,7 @@ void accept_job(Arkhai* env, Job* job, int idx) {
         for (int j=0; j<NODE_TYPES; j++) {
             cluster->nodes[j].free -= job->nodes[j];
         }
+        //printf("Accepted job on tick %d . Remaining 5090 nodes: %d\n", env->tick, cluster->nodes[R5090].free);
         cluster->tb_capacity -= job->tb_usage;
         return;
     }
@@ -505,9 +517,6 @@ void update_jobs(Arkhai* env) {
             }
 
             float energy_expense = kw*kw_price(env, env->tick);
-
-            // We are now recognizing revenue upfront
-            //agent->job_revenue += job.price;
             agent->energy_expense += energy_expense;
         }
     }
@@ -526,7 +535,7 @@ void c_step(Arkhai* env) {
                 printf("\tIs Heuristic: %d\n", agent->is_heuristic);
                 printf("\tIs Buyer: %d\n", agent->is_buyer);
                 printf("\tJob Revenue: %f\n", agent->job_revenue);
-                printf("\tJob Expense: %f\n", agent->job_expense);
+                printf("\tCompute Expense: %f\n", agent->compute_expense);
                 printf("\tFilled Jobs: %d\n", agent->filled_jobs);
                 printf("\tEnergy Revenue: %f\n", agent->energy_revenue);
                 printf("\tEnergy Expense: %f\n", agent->energy_expense);
@@ -537,10 +546,10 @@ void c_step(Arkhai* env) {
                 continue;
             }
 
-            float job_profit = agent->job_revenue - agent->job_expense;
+            float job_profit = agent->job_revenue - agent->compute_expense;
             float energy_profit = agent->energy_revenue - agent->energy_expense;
             env->log.profit += job_profit + energy_profit;
-            env->log.expense += agent->job_expense + agent->energy_expense;
+            env->log.expense += agent->compute_expense + agent->energy_expense;
             env->log.score += job_profit + energy_profit;
             env->log.episode_length += env->tick;
             env->log.episode_return += agent->episode_return;
@@ -602,24 +611,34 @@ void c_step(Arkhai* env) {
     } else if (best_response_price <= request_price) {
         accept_job(env, request, best_idx);
 
-        float buyer_revenue = job_price(env, request)*request->duration;
-        float buyer_expense = best_response_price*request->duration;
-        buyer->job_revenue += buyer_revenue;
-        buyer->job_expense += buyer_expense;
+        // Full duration used for reward. Clipped duration used for logs.
+        // This prevents the agent from exploiting terminal bounds...
+        // Somewhat. It gets to "ignore" energy expense past the end of the episode.
+        // We should probably come up with a way around this.
+        float duration = request->duration;
+        float clipped_duration = duration;
+        if (env->episode_length - env->tick < duration) {
+            clipped_duration = env->episode_length - env->tick;
+        }
+
+        float buyer_revenue = job_price(env, request);
+        float buyer_expense = best_response_price;
+        buyer->job_revenue += buyer_revenue*clipped_duration;
+        buyer->compute_expense += buyer_expense*clipped_duration;
         buyer->filled_jobs++;
         if (!buyer->is_heuristic) {
-            env->rewards[request_idx] += buyer_revenue - buyer_expense;
+            env->rewards[request_idx] += (buyer_revenue - buyer_expense)*duration;
         }
 
         seller = &env->agents[best_idx];
-        float seller_revenue = best_response_price*request->duration;
-        // This is a bad estimate
-        float seller_expense = job_kw(env, *request)*kw_price(env, env->tick)*request->duration;
-        seller->job_revenue += seller_revenue;
-        seller->energy_expense += seller_expense;
+        float seller_revenue = best_response_price;
+        seller->job_revenue += seller_revenue*clipped_duration;
+        //printf("recognizing seller revenue %f\n", seller_revenue*clipped_duration);
+        // Energy is recognized as it is incurred.
+
         seller->filled_jobs++;
         if (!seller->is_heuristic) {
-            env->rewards[best_idx] += seller_revenue - seller_expense;
+            env->rewards[best_idx] += seller_revenue*duration;
         }
         buyer->request = generate_request(env);
     } else if (request->negotiations < env->request_timeout) {

@@ -10,8 +10,12 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->scripted_buyers = unpack(kwargs, "scripted_buyers");
     env->episode_length = unpack(kwargs, "episode_length");
     env->request_timeout = unpack(kwargs, "request_timeout");
-    env->job_nodes = unpack(kwargs, "job_nodes");
-    env->job_nodes_dr = unpack(kwargs, "job_nodes_dr");
+    env->job_nodes[A100] = unpack(kwargs, "job_a100_nodes");
+    env->job_nodes[H100] = unpack(kwargs, "job_h100_nodes");
+    env->job_nodes[R5090] = unpack(kwargs, "job_r5090_nodes");
+    env->job_nodes_dr[A100] = unpack(kwargs, "job_a100_nodes_dr");
+    env->job_nodes_dr[H100] = unpack(kwargs, "job_h100_nodes_dr");
+    env->job_nodes_dr[R5090] = unpack(kwargs, "job_r5090_nodes_dr");
     env->job_duration = unpack(kwargs, "job_duration");
     env->job_duration_dr = unpack(kwargs, "job_duration_dr");
     env->job_tb_usage = unpack(kwargs, "job_tb_usage");
@@ -28,6 +32,8 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->a100_kw = unpack(kwargs, "a100_kw");
     env->h100_price = unpack(kwargs, "h100_price");
     env->h100_kw = unpack(kwargs, "h100_kw");
+    env->r5090_price = unpack(kwargs, "r5090_price");
+    env->r5090_kw = unpack(kwargs, "r5090_kw");
     env->energy_demand_base = unpack(kwargs, "energy_demand_base");
     env->kwh_price_base = unpack(kwargs, "kwh_price_base");
     env->kwh_price_sensitivity = unpack(kwargs, "kwh_price_sensitivity");
@@ -41,8 +47,16 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->randomize_offset = unpack(kwargs, "randomize_offset");
     env->preset = unpack(kwargs, "preset");
     ClusterSpec seller_spec = {
-        .node_capacity = unpack(kwargs, "cluster_node_capacity"),
-        .node_capacity_dr = unpack(kwargs, "cluster_node_capacity_dr"),
+        .node_capacity = {
+            unpack(kwargs, "cluster_a100_capacity"),
+            unpack(kwargs, "cluster_h100_capacity"),
+            unpack(kwargs, "cluster_r5090_capacity"),
+        },
+        .node_capacity_dr = {
+            unpack(kwargs, "cluster_a100_capacity_dr"),
+            unpack(kwargs, "cluster_h100_capacity_dr"),
+            unpack(kwargs, "cluster_r5090_capacity_dr"),
+        },
         .tb_capacity = unpack(kwargs, "cluster_tb_capacity"),
         .tb_capacity_dr = unpack(kwargs, "cluster_tb_capacity_dr"),
         .kwh_capacity = unpack(kwargs, "cluster_kwh_capacity"),

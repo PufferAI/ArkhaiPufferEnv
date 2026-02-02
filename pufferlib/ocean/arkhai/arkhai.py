@@ -11,7 +11,7 @@ from pufferlib.ocean.arkhai import binding
 class Arkhai(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, buf=None, seed=0, **kwargs):
         self.single_observation_space = gymnasium.spaces.Box(low=0, high=1,
-            shape=(18,), dtype=np.float32)
+            shape=(21,), dtype=np.float32)
         self.single_action_space = gymnasium.spaces.MultiDiscrete([9, 2])
         self.render_mode = render_mode
         self.num_agents = num_envs

@@ -9,8 +9,8 @@ Arkhai create_train_env() {
         .scripted_buyers=1,
         .episode_length=100,
         .request_timeout=5,
-        .job_nodes=10,
-        .job_nodes_dr=0.2,
+        .job_nodes={10, 10, 10},
+        .job_nodes_dr={0.2, 0.2, 0.2},
         .job_duration=10,
         .job_duration_dr=0.2,
         .job_tb_usage=0.2,
@@ -27,6 +27,8 @@ Arkhai create_train_env() {
         .a100_kw=6.5,
         .h100_price=15.92,
         .h100_kw=10.0,
+        .r5090_price=0.37,
+        .r5090_kw=1.0,
         .energy_demand_base=1500.0,
         .kwh_price_base=0.02,
         .kwh_price_sensitivity=0.0000001,
@@ -43,8 +45,8 @@ Arkhai create_train_env() {
 
 ClusterSpec create_train_spec() {
     return (ClusterSpec) {
-        .node_capacity = 100,
-        .node_capacity_dr = 0.2,
+        .node_capacity = {100, 100, 100},
+        .node_capacity_dr = {0.2, 0.2, 0.2},
         .tb_capacity = 100,
         .tb_capacity_dr = 0.2,
         .kwh_capacity = 100,
@@ -69,13 +71,16 @@ Arkhai create_test_env() {
         .job_efficiency=1.0,
         .job_efficiency_dr=0.0,
         .job_tb_usage=0,
-        .job_nodes=1,
+        .job_nodes={1, 1, 1},
+        .job_nodes_dr={0.0, 0.0, 0.0},
         .reward_scale=0.0001,
         .tb_price=0.03,
         .a100_price=5,
         .a100_kw=6.5,
         .h100_price=5,
         .h100_kw=10.0,
+        .r5090_price=0.37,
+        .r5090_kw=1.0,
         .energy_demand_base=0.0,
         .kwh_price_base=0.0,
         .kwh_price_sensitivity=0.0,
@@ -98,8 +103,8 @@ Arkhai create_test_env() {
 
 ClusterSpec create_test_spec() {
     return (ClusterSpec) {
-        .node_capacity = 1,
-        .node_capacity_dr = 0.0,
+        .node_capacity = {1, 1, 1},
+        .node_capacity_dr = {0.0, 0.0, 0.0},
         .tb_capacity = 10000,
         .tb_capacity_dr = 0.0,
         .kwh_capacity = 1000,
@@ -140,8 +145,8 @@ int main() {
     env = create_test_env();
     env.kwh_price_base = 1.0f;
     seller_spec = create_test_spec();
-    seller_spec.kw_generation = 1,
-    seller_spec.node_capacity = 0;
+    seller_spec.kw_generation = 1;
+    memset(seller_spec.node_capacity, 0, sizeof(int)*NODE_TYPES);
     seller_spec.kwh_capacity = 0;
     buyer_spec = (ClusterSpec){0};
     num_agents = env.ai_buyers + env.ai_sellers;
@@ -191,7 +196,7 @@ int main() {
     }
     assert(env.agents[0].job_revenue == 950.0f && "Bilateral negotiation seller incorrect revenue");
     assert(env.agents[1].job_revenue == 1000.0f && "Bilateral negotiation buyer incorrect revenue");
-    assert(env.agents[1].job_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
+    assert(env.agents[1].compute_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
     c_step(&env);
     free(env.observations);
     free(env.actions);
@@ -223,12 +228,62 @@ int main() {
     printf("\tN: %f\n", env.log.n);
     //assert(env.agents[0].job_revenue == 950.0f && "Bilateral negotiation seller incorrect revenue");
     //assert(env.agents[1].job_revenue == 1000.0f && "Bilateral negotiation buyer incorrect revenue");
-    //assert(env.agents[1].job_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
+    //assert(env.agents[1].compute_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
     c_step(&env);
     free(env.observations);
     free(env.actions);
     free(env.rewards);
     free(env.terminals);
     c_close(&env);
-    printf("Finished mirrored training environment\n");
+    printf("Finished mirrored training environment\n\n");
+
+    // Selling 200x 5090 test
+    printf("Selling 200x single 5090s\n");
+    env = create_train_env();
+    env.scripted_buy_price=1.0,
+    env.scripted_buy_price_dr=0.0,
+    env.job_duration=100;
+    env.job_duration_dr=0;
+    env.job_nodes[A100] = 0;
+    env.job_nodes[H100] = 0;
+    env.job_nodes[R5090] = 200;
+    env.job_nodes_dr[R5090] = 0.0;
+    env.job_tb_usage=1.0;
+    env.job_tb_usage_dr=0.0;
+ 
+    seller_spec = (ClusterSpec){
+        .node_capacity = {0, 0, 200},
+        .node_capacity_dr = {0.0, 0.0, 0.0},
+        .tb_capacity = 200,
+        .tb_capacity_dr = 0.0,
+        .kwh_capacity = 0,
+        .kwh_capacity_dr = 0.0,
+        .kw_generation = 0,
+        .kw_generation_dr = 0.0,
+    };
+    buyer_spec = (ClusterSpec){0};
+    num_agents = env.ai_buyers + env.ai_sellers;
+    init(&env, buyer_spec, seller_spec);
+    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
+    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
+    env.rewards = (float*)calloc(num_agents, sizeof(float));
+    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    c_reset(&env);
+
+    while (env.terminals[0] == 0) {
+        env.actions[0] = 4;
+        c_step(&env);
+    }
+    printf("\tProfit: %f\n", env.log.profit / env.log.n);
+    printf("\tExpense: %f\n", env.log.expense / env.log.n);
+    printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
+    printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
+    printf("\tN: %f\n", env.log.n);
+    c_step(&env);
+    free(env.observations);
+    free(env.actions);
+    free(env.rewards);
+    free(env.terminals);
+    c_close(&env);
+    printf("Finished 200x single 5090s\n");
 }
