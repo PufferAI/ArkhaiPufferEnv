@@ -22,6 +22,10 @@ const int R5090 = 2;
 float NODE_PRICES[] = {0, 0, 0};
 float NODE_ENERGY_KW[] = {0, 0, 0};
 
+// Whenever you call vec_log, PufferLib will
+// sum all fields in Log across all env instances per-core
+// and divide by n. All fields must be floats, and n must
+// be the last field.
 typedef struct {
     float score;
     float expense;
@@ -64,6 +68,8 @@ typedef struct {
     float reputation;
 } Cluster;
 
+// Different clusters can have different specifications with noise.
+// Clusters are sampled from a ClusterSpec params + domain randomization (dr).
 typedef struct {
     int node_capacity[NODE_TYPES];
     float node_capacity_dr[NODE_TYPES];
@@ -75,6 +81,7 @@ typedef struct {
     float kw_generation_dr;
 } ClusterSpec;
 
+// Agents can be buyers or sellers, heuristic or RL
 typedef struct {
     ClusterSpec cluster_spec;
     Cluster cluster;
@@ -92,11 +99,14 @@ typedef struct {
 } Agent;
 
 typedef struct {
+    // This chunk is all required puffer api
     Log log;
     float* observations;
     int* actions;
     float* rewards;
     unsigned char* terminals;
+    // ... until here. These pointers get set to chunks of
+    // shared memory by env_binding.h
     Agent* agents;
     int ai_sellers;
     int ai_buyers;
@@ -142,6 +152,8 @@ typedef struct {
     bool debug;
 } Arkhai;
 
+// I was playing with having "presets" for different training configs.
+// It's a bit fiddly though. There are way more env knobs than when I introduced this.
 enum PRESET {
     NONE,
     DEFAULT,
@@ -149,32 +161,6 @@ enum PRESET {
     STORAGE_CENTER,
     PREMIUM_HPC,
 };
-
-enum SIDE {
-    SELLER,
-    BUYER,
-    BOTH,
-};
-
-float randf(float min, float max) {
-    return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
-}
-
-float randomized(float base, float dr) {
-    return randf(base*(1.0f-dr), base*(1.0f+dr));
-}
-
-void init_cluster(Cluster* cluster, ClusterSpec* spec) {
-    cluster->kw_generation = randomized(spec->kw_generation, spec->kw_generation_dr);
-    cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
-    cluster->tb_capacity = randomized(spec->tb_capacity, spec->tb_capacity_dr);
-    for (int i=0; i<NODE_TYPES; i++) {
-        int capacityy = spec->node_capacity[i];
-        float capacity_dr = spec->node_capacity_dr[i];
-        cluster->nodes[i].total = randomized(capacityy, capacity_dr);
-        cluster->nodes[i].free = cluster->nodes[i].total;
-    }
-}
 
 /*
 void apply_kwh_storage_producer_preset(ClusterSpec* spec) {
@@ -200,6 +186,33 @@ void apply_premium_hpc_preset(Arkhai* env) {
 }
 */
 
+enum SIDE {
+    SELLER,
+    BUYER,
+    BOTH,
+};
+
+float randf(float min, float max) {
+    return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
+}
+
+// Simple uniform randomization with dr
+float randomized(float base, float dr) {
+    return randf(base*(1.0f-dr), base*(1.0f+dr));
+}
+
+void init_cluster(Cluster* cluster, ClusterSpec* spec) {
+    cluster->kw_generation = randomized(spec->kw_generation, spec->kw_generation_dr);
+    cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
+    cluster->tb_capacity = randomized(spec->tb_capacity, spec->tb_capacity_dr);
+    for (int i=0; i<NODE_TYPES; i++) {
+        int capacityy = spec->node_capacity[i];
+        float capacity_dr = spec->node_capacity_dr[i];
+        cluster->nodes[i].total = randomized(capacityy, capacity_dr);
+        cluster->nodes[i].free = cluster->nodes[i].total;
+    }
+}
+
 void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     int num_buyers = env->ai_buyers + env->scripted_buyers;
     assert(num_buyers > 0);
@@ -210,6 +223,7 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     env->num_agents = num_buyers + num_sellers;
     env->agents = calloc(env->num_agents, sizeof(Agent));
 
+    // Note storage order: RL agents first, then heuristic agents
     int agent_idx = 0;
     for (int i=0; i<env->ai_sellers; i++) {
         env->agents[agent_idx].cluster_spec = seller_spec;
@@ -272,7 +286,6 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     assert(env->kwh_price_sensitivity >= 0.0f);
     assert(env->kwh_demand_threshold >= 0.0f);
 
-    // TODO: Needed?
     assert(env->randomize_offset == 0 || env->randomize_offset == 1);
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         ClusterSpec* spec = &env->agents[agent_idx].cluster_spec;
@@ -290,6 +303,7 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
 
 }
 
+// Used to select a random buy order
 int select_buyer(Arkhai* env) {
     int num_buyers = env->scripted_buyers + env->ai_buyers;
     int idxs[num_buyers];
@@ -321,6 +335,8 @@ float job_price(Arkhai* env, Job* job) {
     return price;
 }
 
+// Random job request, based on job spec settings. If no jobs are
+// filling, check that your seller has enough capacity
 Job generate_request(Arkhai* env) {
     Job job = (Job) {
         .tb_usage = randomized(env->job_tb_usage, env->job_tb_usage_dr),
@@ -374,7 +390,8 @@ void compute_observations(Arkhai* env) {
 }
 
 void c_reset(Arkhai* env) {
-    // This is for first-time reset. Staggering improves training stability.
+    // This is for first-time reset only. Staggering improves training stability.
+    // Forgetting to disable this is a great way to break your evals.
     if (env->randomize_offset && env->tick == 0) {
         env->tick = 0 + rand()%env->episode_length;
     } else {
@@ -419,6 +436,7 @@ bool can_accept_job(Arkhai* env, Agent* agent, Job* job) {
     return false;
 }
 
+// Mark nodes/tb as used on accept
 void accept_job(Arkhai* env, Job* job, int idx) {
     assert(idx >= 0 && idx < env->num_agents);
     Agent* agent = &env->agents[idx];
@@ -437,6 +455,8 @@ void accept_job(Arkhai* env, Job* job, int idx) {
     }
 }
 
+// We assume jobs can have an efficiency modifier. You should set
+// job_efficiency < 1 to compensate if you use this.
 float job_kw(Arkhai* env, Job job) {
     float kw = 0.0f;
     for (int i=0; i<NODE_TYPES; i++) {
@@ -463,6 +483,9 @@ float calculate_price(float demand, float p0, float threshold, float c) {
     return p0 + c*powf(excess, 2.0f); // Quadratic for non-linear spike
 }
 
+// I didn't know how you would want to price energy so I just gave you
+// some Fourier components and fit something that looks roughly like the
+// wikipedia graphs.
 float kw_price(Arkhai* env, float t) {
     float demand = env->energy_demand_base + (
         env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
@@ -472,6 +495,8 @@ float kw_price(Arkhai* env, float t) {
     return env->kwh_price_base + env->kwh_price_sensitivity*powf(excess, 2.0f);
 }
 
+// Clear/update fns will bottleneck perf eventually with enough agents/jobs
+// and we will have to do something smarter, but it is fast for now.
 void clear_finished_jobs(Arkhai* env) {
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = env->agents + agent_idx;
@@ -516,6 +541,7 @@ void update_jobs(Arkhai* env) {
                 cluster->kwh_storage = 0;
             }
 
+            // Jobs incur energy expense as it is used. Pricing is upfront.
             float energy_expense = kw*kw_price(env, env->tick);
             agent->energy_expense += energy_expense;
         }
@@ -527,6 +553,8 @@ void c_step(Arkhai* env) {
     memset(env->rewards, 0, ai_agents*sizeof(float));
     memset(env->terminals, 0, ai_agents*sizeof(unsigned char));
 
+    // We have an episode timeout. You need this to resample domain randomization.
+    // It can also mask degenerate states though. We should test some longer runs.
     if (env->tick >= env->episode_length) {
         for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
             Agent* agent = env->agents + agent_idx;
@@ -573,24 +601,25 @@ void c_step(Arkhai* env) {
     if (buyer->is_heuristic) {
         request_price = buyer_response(env, *request, base_price);
     } else {
+        // I am discretizing the action space to +/- 20% of base price estimate in buckets of 5%
+        // This does not need to be uniform, and we can adjust it for finer pricing. Not too
+        // many buckets though.
         // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
         float price_mul = 1.0f + ((float)env->actions[2*request_idx] - 4.0f)/20.0f;
         request_price = price_mul * base_price;
     }
 
+    // There can be multiple buyers, but sellers only make offers on one job at a time.
     int best_idx = -1;
     float best_response_price = FLT_MAX;
-    float response_prices[env->num_agents];
     bool exists_valid_buyer = false; // We skip negotiation if nobody has capacity
     Agent* seller;
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         if (agent_idx == request_idx) {
-            response_prices[agent_idx] = FLT_MAX;
             continue;
         }
         seller = &env->agents[agent_idx];
         if (!can_accept_job(env, seller, request)) {
-            response_prices[agent_idx] = FLT_MAX;
             continue;
         }
         exists_valid_buyer = true;
@@ -609,12 +638,14 @@ void c_step(Arkhai* env) {
     if (!exists_valid_buyer) {
         // Skip negotiation
     } else if (best_response_price <= request_price) {
+        // The best seller offer wins the job
         accept_job(env, request, best_idx);
 
         // Full duration used for reward. Clipped duration used for logs.
         // This prevents the agent from exploiting terminal bounds...
         // Somewhat. It gets to "ignore" energy expense past the end of the episode.
-        // We should probably come up with a way around this.
+        // We should probably come up with a way around this. But energy expense is
+        // actually not that high. It looks like most of pricing is capex on chips.
         float duration = request->duration;
         float clipped_duration = duration;
         if (env->episode_length - env->tick < duration) {
@@ -650,6 +681,7 @@ void c_step(Arkhai* env) {
     clear_finished_jobs(env);
     buyer->request = generate_request(env);
 
+    // Assume energy over capacity is sold at the current market price
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
         Agent* agent = &env->agents[agent_idx];
         Cluster* cluster = &agent->cluster;
@@ -692,6 +724,7 @@ void c_step(Arkhai* env) {
     compute_observations(env);
 }
 
+// Placeholder. There isn't a renderer at the moment.
 const Color PUFF_RED = (Color){187, 0, 0, 255};
 const Color PUFF_CYAN = (Color){0, 187, 187, 255};
 const Color PUFF_WHITE = (Color){241, 241, 241, 241};

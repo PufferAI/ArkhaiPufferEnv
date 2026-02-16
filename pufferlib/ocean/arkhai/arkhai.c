@@ -1,5 +1,7 @@
 #include "arkhai.h"
 
+// Annoying: we have to dupe all the params from base. I can add a simple C ini
+// parser in the next version. We have this for some tests in 4.0 and it works well.
 Arkhai create_train_env() {
     return (Arkhai) {
         .tick=0,
@@ -55,7 +57,6 @@ ClusterSpec create_train_spec() {
         .kw_generation_dr = 0.2,
     };
 }
-
 
 Arkhai create_test_env() {
     return (Arkhai) {
