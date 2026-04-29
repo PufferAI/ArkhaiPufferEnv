@@ -8,7 +8,7 @@
 
 #define MAX_JOBS 100
 
-#define NUM_OBS 21
+#define NUM_OBS 23
 #define NUM_ACT 2
 
 typedef struct {
@@ -30,6 +30,8 @@ typedef struct {
     float score;
     float expense;
     float profit;
+    float energy_revenue;
+    float energy_expense;
     float episode_length;
     float episode_return;
     float n;
@@ -93,6 +95,7 @@ typedef struct {
     float energy_expense;
     float prev_reward;
     float episode_return;
+    float profit_this_tick;
     int filled_jobs;
     bool is_heuristic;
     bool is_buyer;
@@ -201,6 +204,18 @@ float randomized(float base, float dr) {
     return randf(base*(1.0f-dr), base*(1.0f+dr));
 }
 
+// I didn't know how you would want to price energy so I just gave you
+// some Fourier components and fit something that looks roughly like the
+// wikipedia graphs.
+float kw_price(Arkhai* env, float t) {
+    float demand = env->energy_demand_base + (
+        env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
+        env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
+        env->a3*cosf(6.0f*PI*t/24.0f) + env->b3*sinf(6.0f*PI*t/24.0f));
+    float excess = fmaxf(0.0f, demand - env->kwh_demand_threshold);
+    return env->kwh_price_base + env->kwh_price_sensitivity*powf(excess, 2.0f);
+}
+
 void init_cluster(Cluster* cluster, ClusterSpec* spec) {
     cluster->kw_generation = randomized(spec->kw_generation, spec->kw_generation_dr);
     cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
@@ -222,6 +237,7 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     
     env->num_agents = num_buyers + num_sellers;
     env->agents = calloc(env->num_agents, sizeof(Agent));
+    env->tick = 0;
 
     // Note storage order: RL agents first, then heuristic agents
     int agent_idx = 0;
@@ -367,6 +383,8 @@ void compute_observations(Arkhai* env) {
         Cluster* cluster = &agent->cluster;
 
         env->observations[i++] = (env->tick % 24) / 24.0f;
+        env->observations[i++] = env->tick / (float)env->episode_length;
+        env->observations[i++] = kw_price(env, env->tick);
         for (int j=0; j<NODE_TYPES; j++) {
             env->observations[i++] = cluster->nodes[j].total / ((float)env->job_nodes[j] + 1);
             env->observations[i++] = cluster->nodes[j].free / ((float)env->job_nodes[j] + 1);
@@ -483,17 +501,7 @@ float calculate_price(float demand, float p0, float threshold, float c) {
     return p0 + c*powf(excess, 2.0f); // Quadratic for non-linear spike
 }
 
-// I didn't know how you would want to price energy so I just gave you
-// some Fourier components and fit something that looks roughly like the
-// wikipedia graphs.
-float kw_price(Arkhai* env, float t) {
-    float demand = env->energy_demand_base + (
-        env->a1*cosf(2.0f*PI*t/24.0f) + env->b1*sinf(2.0f*PI*t/24.0f) +
-        env->a2*cosf(4.0f*PI*t/24.0f) + env->b2*sinf(4.0f*PI*t/24.0f) +
-        env->a3*cosf(6.0f*PI*t/24.0f) + env->b3*sinf(6.0f*PI*t/24.0f));
-    float excess = fmaxf(0.0f, demand - env->kwh_demand_threshold);
-    return env->kwh_price_base + env->kwh_price_sensitivity*powf(excess, 2.0f);
-}
+
 
 // Clear/update fns will bottleneck perf eventually with enough agents/jobs
 // and we will have to do something smarter, but it is fast for now.
@@ -544,6 +552,7 @@ void update_jobs(Arkhai* env) {
             // Jobs incur energy expense as it is used. Pricing is upfront.
             float energy_expense = kw*kw_price(env, env->tick);
             agent->energy_expense += energy_expense;
+            agent->profit_this_tick -= energy_expense;
         }
     }
 } 
@@ -552,6 +561,11 @@ void c_step(Arkhai* env) {
     int ai_agents = env->ai_sellers + env->ai_buyers;
     memset(env->rewards, 0, ai_agents*sizeof(float));
     memset(env->terminals, 0, ai_agents*sizeof(unsigned char));
+
+    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
+        Agent* agent = env->agents + agent_idx;
+        agent->profit_this_tick = 0.0f;
+    }
 
     // We have an episode timeout. You need this to resample domain randomization.
     // It can also mask degenerate states though. We should test some longer runs.
@@ -578,6 +592,8 @@ void c_step(Arkhai* env) {
             float energy_profit = agent->energy_revenue - agent->energy_expense;
             env->log.profit += job_profit + energy_profit;
             env->log.expense += agent->compute_expense + agent->energy_expense;
+            env->log.energy_revenue += agent->energy_revenue;
+            env->log.energy_expense += agent->energy_expense;
             env->log.score += job_profit + energy_profit;
             env->log.episode_length += env->tick;
             env->log.episode_return += agent->episode_return;
@@ -658,7 +674,7 @@ void c_step(Arkhai* env) {
         buyer->compute_expense += buyer_expense*clipped_duration;
         buyer->filled_jobs++;
         if (!buyer->is_heuristic) {
-            env->rewards[request_idx] += (buyer_revenue - buyer_expense)*duration;
+            buyer->profit_this_tick += (buyer_revenue - buyer_expense)*duration;
         }
 
         seller = &env->agents[best_idx];
@@ -669,7 +685,7 @@ void c_step(Arkhai* env) {
 
         seller->filled_jobs++;
         if (!seller->is_heuristic) {
-            env->rewards[best_idx] += seller_revenue*duration;
+            seller->profit_this_tick += seller_revenue*duration;
         }
         buyer->request = generate_request(env);
     } else if (request->negotiations < env->request_timeout) {
@@ -694,7 +710,7 @@ void c_step(Arkhai* env) {
         float energy_revenue = diff*kw_price(env, env->tick);
         agent->energy_revenue += energy_revenue;
         if (!agent->is_heuristic) {
-            env->rewards[agent_idx] += energy_revenue;
+            agent->profit_this_tick += energy_revenue;
         }
     }
 
@@ -704,20 +720,27 @@ void c_step(Arkhai* env) {
         Agent* agent = &env->agents[agent_idx];
         Cluster* cluster = &agent->cluster;
 
-        // Sell energy
-        if (env->actions[2*agent_idx + 1] > 0) {
-            float amt = 0.5f * cluster->kwh_storage;
-            float profit = amt*kw_price(env, env->tick);
+        int energy_atn = env->actions[2*agent_idx + 1];
+        if (energy_atn < 4) {
+            float sell_frac = (energy_atn + 1) / 4.0f; // 0.25, 0.5, 0.75, 1.0
+            float amt = sell_frac * cluster->kwh_storage;
+            float price = amt*kw_price(env, env->tick);
+            agent->profit_this_tick += price;
+            agent->energy_revenue += price;
             cluster->kwh_storage -= amt;
-            agent->energy_revenue += profit;
-            env->rewards[agent_idx] += profit;
+        } else if (energy_atn > 4) {
+            float buy_frac = (energy_atn - 4) / 4.0f; // 0.25, 0.5, 0.75, 1.0
+            float amt = buy_frac * (cluster->kwh_capacity - cluster->kwh_storage);
+            float price = amt*kw_price(env, env->tick);
+            agent->profit_this_tick -= price;
+            agent->energy_expense += price;
+            cluster->kwh_storage += amt;
         }
-     
+
         // Scale rewards
-        float reward = env->rewards[agent_idx];
-        reward *= env->reward_scale;
-        env->rewards[agent_idx] = reward;
+        float reward = env->reward_scale * agent->profit_this_tick;
         agent->episode_return += reward;
+        env->rewards[agent_idx] = reward;
         agent->prev_reward = reward;
     }
 

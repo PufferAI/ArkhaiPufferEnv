@@ -1,4 +1,24 @@
+#include <assert.h>
 #include "arkhai.h"
+
+
+void allocate_buffers(Arkhai* env, int num_agents) {
+    env->observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
+    env->actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
+    env->rewards = (float*)calloc(num_agents, sizeof(float));
+    env->terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+}
+
+void free_buffers(Arkhai* env) {
+    free(env->observations);
+    free(env->actions);
+    free(env->rewards);
+    free(env->terminals);
+}
+
+bool is_close(float a, float b) {
+    return fabsf(a-b) < 1e-6;
+}
 
 // Annoying: we have to dupe all the params from base. I can add a simple C ini
 // parser in the next version. We have this for some tests in 4.0 and it works well.
@@ -61,7 +81,7 @@ ClusterSpec create_train_spec() {
 Arkhai create_test_env() {
     return (Arkhai) {
         .tick=0,
-        .episode_length=96,
+        .episode_length=100,
         .job_duration=10,
         .job_duration_dr=0.0,
         .request_timeout=5,
@@ -80,7 +100,7 @@ Arkhai create_test_env() {
         .a100_kw=6.5,
         .h100_price=5,
         .h100_kw=10.0,
-        .r5090_price=0.37,
+        .r5090_price=0.0,
         .r5090_kw=1.0,
         .energy_demand_base=0.0,
         .kwh_price_base=0.0,
@@ -114,8 +134,8 @@ ClusterSpec create_test_spec() {
         .kw_generation_dr = 0.0,
     };
 }
- 
-int main() {
+
+void test_sanity() {
     // Basic sanity: fill 10 jobs. Note: revenue gets recognized upfront,
     // so the expected output is 1000 instead of 960
     printf("Basic sanity check\n");
@@ -124,101 +144,132 @@ int main() {
     ClusterSpec buyer_spec = {0};
     int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(num_agents, sizeof(float));
-    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    allocate_buffers(&env, num_agents);
     c_reset(&env);
     for (int i=0; i<env.episode_length; i++){
         c_step(&env);
     }
     assert(env.agents[0].job_revenue == 1000.0f && "Failed basic sale check");
     c_step(&env);
-    free(env.observations);
-    free(env.actions);
-    free(env.rewards);
-    free(env.terminals);
+    free_buffers(&env);
     c_close(&env);
     printf("Passed basic sanity check\n\n");
+}
 
-    // Energy production with no storage
-    printf("Energy production with no storage\n");
-    env = create_test_env();
-    env.kwh_price_base = 1.0f;
-    seller_spec = create_test_spec();
-    seller_spec.kw_generation = 1;
-    memset(seller_spec.node_capacity, 0, sizeof(int)*NODE_TYPES);
-    seller_spec.kwh_capacity = 0;
-    buyer_spec = (ClusterSpec){0};
-    num_agents = env.ai_buyers + env.ai_sellers;
+void test_storage() {
+    printf("Basic storage check\n");
+    Arkhai env = create_test_env();
+    for (int i=0; i<NODE_TYPES; i++) {
+        env.job_nodes[i] = 0;
+    }
+    env.job_tb_usage = 10.0f;
+    env.tb_price = 1.0f;
+    ClusterSpec seller_spec = create_test_spec();
+    seller_spec.tb_capacity = 100;
+    for (int i=0; i<NODE_TYPES; i++) {
+        seller_spec.node_capacity[i] = 0;
+    }
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(num_agents, sizeof(float));
-    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    allocate_buffers(&env, num_agents);
     c_reset(&env);
-    for (int i=0; i<env.episode_length; i++){
+    for (int i=0; i<10; i++){
         c_step(&env);
     }
-    assert(env.agents[0].energy_revenue == env.episode_length && "Failed energy production check");
+    assert(env.agents[0].job_revenue == 1000.0f && "Failed basic storage check");
     c_step(&env);
-    free(env.observations);
-    free(env.actions);
-    free(env.rewards);
-    free(env.terminals);
+    free_buffers(&env);
     c_close(&env);
-    printf("Passed energy production with no storage\n\n");
+    printf("Passed basic storage check\n\n");
+}
 
+
+void test_energy_production() {
+    printf("Energy production\n");
+    Arkhai env = create_test_env();
+    env.scripted_sellers = 0;
+    env.ai_sellers = 1;
+    env.kwh_price_base = 1.0f;
+    ClusterSpec seller_spec = create_test_spec();
+    seller_spec.kw_generation = 1;
+    memset(seller_spec.node_capacity, 0, sizeof(int)*NODE_TYPES);
+    seller_spec.kwh_capacity = 10;
+    ClusterSpec buyer_spec = (ClusterSpec){0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
+    init(&env, buyer_spec, seller_spec);
+    allocate_buffers(&env, num_agents);
+    c_reset(&env);
+    for (int i=0; i<env.episode_length; i++){
+        env.actions[1] = 4; // Don't sell
+        if (i == 9) {
+            env.actions[1] = 1; // Sell half
+            c_step(&env);
+            assert(env.agents[0].energy_revenue == 5.0f && "Failed manual energy sale check");
+        } else if (i >= 20) {
+            c_step(&env);
+            assert(env.agents[0].energy_revenue == i - 9 && "Failed automatic energy sale check");
+        } else {
+            c_step(&env);
+        }
+    }
+    c_step(&env);
+    free_buffers(&env);
+    c_close(&env);
+    printf("Passed energy sale\n\n");
+}
+
+void test_bilateral_negotiation() {
     // Bilateral agent negotiation
     printf("Bilateral agent negotiation\n");
-    env = create_test_env();
+    Arkhai env = create_test_env();
     env.ai_sellers = 1;
     env.ai_buyers = 1;
     env.scripted_sellers = 0;
     env.scripted_buyers = 0;
-    seller_spec = create_test_spec();
-    buyer_spec = (ClusterSpec){0};
-    num_agents = env.ai_buyers + env.ai_sellers;
+    ClusterSpec seller_spec = create_test_spec();
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(num_agents, sizeof(float));
-    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    allocate_buffers(&env, num_agents);
     c_reset(&env);
     for (int i=0; i<2*env.episode_length; i++){
+        int tick_before = env.tick;
         if (i%2 == 0) {
             env.actions[0] = 4; // Seller offers midpoint
             env.actions[2] = 2; // Buyer offers very low
+            c_step(&env);
+            // Negotiation can fail due to lack of resources on later ticks
+            if (i == 0) {
+                assert(env.tick == tick_before && "tick advanced on failed negotiation");
+            }
         } else {
             env.actions[0] = 3; // Seller offers discount
             env.actions[2] = 3; // Buyer matches
+            c_step(&env);
+            assert(env.tick != tick_before && "tick did not advance on completed negotiation");
         }
-        c_step(&env);
     }
     assert(env.agents[0].job_revenue == 950.0f && "Bilateral negotiation seller incorrect revenue");
     assert(env.agents[1].job_revenue == 1000.0f && "Bilateral negotiation buyer incorrect revenue");
     assert(env.agents[1].compute_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
     c_step(&env);
-    free(env.observations);
-    free(env.actions);
-    free(env.rewards);
-    free(env.terminals);
+    free_buffers(&env);
     c_close(&env);
     printf("Passed bilateral agent negotiation\n\n");
+}
 
+void test_determinism() {
     // Training environment
     printf("Mirrored training environment\n");
-    env = create_train_env();
-    seller_spec = create_train_spec();
-    buyer_spec = (ClusterSpec){0};
-    num_agents = env.ai_buyers + env.ai_sellers;
+    Arkhai env = create_train_env();
+    ClusterSpec seller_spec = create_train_spec();
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(num_agents, sizeof(float));
-    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    allocate_buffers(&env, num_agents);
     c_reset(&env);
-    for (int i=0; i<1000000; i++) {
+    for (int i=0; i<100000; i++) {
         env.actions[0] = 2;
         c_step(&env);
     }
@@ -227,20 +278,19 @@ int main() {
     printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
     printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
     printf("\tN: %f\n", env.log.n);
-    //assert(env.agents[0].job_revenue == 950.0f && "Bilateral negotiation seller incorrect revenue");
-    //assert(env.agents[1].job_revenue == 1000.0f && "Bilateral negotiation buyer incorrect revenue");
-    //assert(env.agents[1].compute_expense == 950.0f && "Bilateral negotiation buyer incorrect expense");
+    assert(is_close(env.log.profit / env.log.n, 140854.921875) && "Profit changed since test authorship");
+    assert(is_close(env.log.expense / env.log.n, 2846.110596) && "Expense changed since test authorship");
+    assert(is_close(env.log.episode_return / env.log.n, 14.726909) && "Episode return changed since test authorship");
     c_step(&env);
-    free(env.observations);
-    free(env.actions);
-    free(env.rewards);
-    free(env.terminals);
+    free_buffers(&env);
     c_close(&env);
-    printf("Finished mirrored training environment\n\n");
+    printf("Finished determinism test\n\n");
+}
 
+void test_200x5090() {
     // Selling 200x 5090 test
     printf("Selling 200x single 5090s\n");
-    env = create_train_env();
+    Arkhai env = create_train_env();
     env.scripted_buy_price=1.0,
     env.scripted_buy_price_dr=0.0,
     env.job_duration=100;
@@ -252,7 +302,7 @@ int main() {
     env.job_tb_usage=1.0;
     env.job_tb_usage_dr=0.0;
  
-    seller_spec = (ClusterSpec){
+    ClusterSpec seller_spec = {
         .node_capacity = {0, 0, 200},
         .node_capacity_dr = {0.0, 0.0, 0.0},
         .tb_capacity = 200,
@@ -262,13 +312,10 @@ int main() {
         .kw_generation = 0,
         .kw_generation_dr = 0.0,
     };
-    buyer_spec = (ClusterSpec){0};
-    num_agents = env.ai_buyers + env.ai_sellers;
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
-    env.observations = (float*)calloc(num_agents*NUM_OBS, sizeof(float));
-    env.actions = (int*)calloc(num_agents*NUM_ACT, sizeof(int));
-    env.rewards = (float*)calloc(num_agents, sizeof(float));
-    env.terminals = (unsigned char*)calloc(num_agents, sizeof(unsigned char));
+    allocate_buffers(&env, num_agents);
     c_reset(&env);
 
     while (env.terminals[0] == 0) {
@@ -281,10 +328,76 @@ int main() {
     printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
     printf("\tN: %f\n", env.log.n);
     c_step(&env);
-    free(env.observations);
-    free(env.actions);
-    free(env.rewards);
-    free(env.terminals);
+    free_buffers(&env);
     c_close(&env);
     printf("Finished 200x single 5090s\n");
+}
+
+void test_calcul() {
+    // Selling 200x 5090 test
+    printf("Calcul test\n");
+    Arkhai env = create_train_env();
+    // Using a residential energy price to create room to test energy optimization
+    env.kwh_price_base = 0.15;
+    env.episode_length = 96;
+    env.scripted_buy_price=1.0,
+    env.scripted_buy_price_dr=0.0,
+    env.job_duration=24;
+    env.job_duration_dr=0.5;
+    env.a100_price = 5.31;
+    env.job_nodes[A100] = 16;
+    env.job_nodes[H100] = 0;
+    env.job_nodes[R5090] = 0;
+    env.job_nodes_dr[A100] = 15.0f/16.0f;
+    env.job_tb_usage=0.0;
+    env.job_tb_usage_dr=0.0;
+ 
+    ClusterSpec seller_spec = {
+        .node_capacity = {80, 0, 0},
+        .node_capacity_dr = {0.0, 0.0, 0.0},
+        .tb_capacity = 0,
+        .tb_capacity_dr = 0.0,
+        .kwh_capacity = 1000,
+        .kwh_capacity_dr = 0.0,
+        .kw_generation = 0,
+        .kw_generation_dr = 0.0,
+    };
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
+    init(&env, buyer_spec, seller_spec);
+    allocate_buffers(&env, num_agents);
+
+    for (int i=0; i<10000; i++) {
+        env.actions[0] = 4;
+
+        if (env.observations[0] == 0) {
+            env.actions[1] = 8;
+        } else if (env.observations[0] == 0.5) {
+            env.actions[1] = 3;
+        } else {
+            env.actions[1] = 4;
+        }
+
+        c_step(&env);
+    }
+    printf("\tCeiling: %f\n", env.episode_length * seller_spec.node_capacity[A100] * env.a100_price);
+    printf("\tProfit: %f\n", env.log.profit / env.log.n);
+    printf("\tExpense: %f\n", env.log.expense / env.log.n);
+    printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
+    printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
+    printf("\tN: %f\n", env.log.n);
+    c_step(&env);
+    free_buffers(&env);
+    c_close(&env);
+    printf("Finished Calcul test\n");
+}
+
+int main() {
+    test_determinism();
+    test_sanity();
+    test_storage();
+    test_energy_production();
+    test_bilateral_negotiation();
+    test_200x5090();
+    test_calcul();
 }

@@ -257,7 +257,10 @@ class PuffeRL:
 
                 logits, value = self.policy.forward_eval(o_device, state)
                 action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
-                r = torch.clamp(r, -1, 1)
+                # MAJOR problem: Because the reward scale of this env is highly variable,
+                # clipping can bias the agent and create optimal strategies based on using the clipping
+                # to mitigate very bad rewards and then trade that in for a few good ones
+                #r = torch.clamp(r, -1, 1)
 
             profile('eval_copy', epoch)
             with torch.no_grad():

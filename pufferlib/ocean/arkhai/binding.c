@@ -73,6 +73,8 @@ static int my_log(PyObject* dict, Log* log) {
     assign_to_dict(dict, "score", log->score);
     assign_to_dict(dict, "expense", log->expense);
     assign_to_dict(dict, "profit", log->profit);
+    assign_to_dict(dict, "energy_revenue", log->energy_revenue);
+    assign_to_dict(dict, "energy_expense", log->energy_expense);
     assign_to_dict(dict, "episode_length", log->episode_length);
     assign_to_dict(dict, "episode_return", log->episode_return);
     return 0;
