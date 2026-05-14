@@ -8,7 +8,7 @@
 
 #define MAX_JOBS 100
 
-#define NUM_OBS 23
+#define NUM_OBS 29
 #define NUM_ACT 2
 
 typedef struct {
@@ -18,9 +18,11 @@ typedef struct {
 const int A100 = 0;
 const int H100 = 1;
 const int R5090 = 2;
-#define NODE_TYPES 3
-float NODE_PRICES[] = {0, 0, 0};
-float NODE_ENERGY_KW[] = {0, 0, 0};
+const int GH200 = 3;
+const int GB200 = 4;
+#define NODE_TYPES 5
+float NODE_PRICES[] = {0, 0, 0, 0, 0};
+float NODE_ENERGY_KW[] = {0, 0, 0, 0, 0};
 
 // Whenever you call vec_log, PufferLib will
 // sum all fields in Log across all env instances per-core
@@ -34,6 +36,8 @@ typedef struct {
     float energy_expense;
     float episode_length;
     float episode_return;
+    float jobs_completed;
+    float capacity_used;
     float n;
 } Log;
 
@@ -97,6 +101,8 @@ typedef struct {
     float episode_return;
     float profit_this_tick;
     int filled_jobs;
+    int jobs_completed;
+    float capacity_used;
     bool is_heuristic;
     bool is_buyer;
 } Agent;
@@ -139,6 +145,10 @@ typedef struct {
     float h100_kw;
     float r5090_price;
     float r5090_kw;
+    float gh200_price;
+    float gh200_kw;
+    float gb200_price;
+    float gb200_kw;
     float energy_demand_base;
     float kwh_price_base;
     float kwh_price_sensitivity;
@@ -269,9 +279,13 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     NODE_PRICES[A100] = env->a100_price;
     NODE_PRICES[H100] = env->h100_price;
     NODE_PRICES[R5090] = env->r5090_price;
+    NODE_PRICES[GH200] = env->gh200_price;
+    NODE_PRICES[GB200] = env->gb200_price;
     NODE_ENERGY_KW[A100] = env->a100_kw;
     NODE_ENERGY_KW[H100] = env->h100_kw;
     NODE_ENERGY_KW[R5090] = env->r5090_kw;
+    NODE_ENERGY_KW[GH200] = env->gh200_kw;
+    NODE_ENERGY_KW[GB200] = env->gb200_kw;
 
     // Sanity checks. These are here because it is easy to mess up init
     assert(env->ai_sellers >= 0);
@@ -297,6 +311,10 @@ void init(Arkhai* env, ClusterSpec buyer_spec, ClusterSpec seller_spec) {
     assert(env->h100_kw > 0.0f);
     assert(env->r5090_price >= 0.0f);
     assert(env->r5090_kw > 0.0f);
+    assert(env->gh200_price >= 0.0f);
+    assert(env->gh200_kw > 0.0f);
+    assert(env->gb200_price >= 0.0f);
+    assert(env->gb200_kw > 0.0f);
     assert(env->energy_demand_base >= 0.0f);
     assert(env->kwh_price_base >= 0.0f);
     assert(env->kwh_price_sensitivity >= 0.0f);
@@ -425,6 +443,8 @@ void c_reset(Arkhai* env) {
         agent->prev_reward = 0.0f;
         agent->episode_return = 0.0f;
         agent->filled_jobs = 0;
+        agent->jobs_completed = 0;
+        agent->capacity_used = 0.0f;
         init_cluster(&agent->cluster, &agent->cluster_spec);
         memset(agent->jobs, 0, MAX_JOBS*sizeof(Job));
         if (agent->is_buyer) {
@@ -521,8 +541,31 @@ void clear_finished_jobs(Arkhai* env) {
                 cluster->nodes[j].free += job.nodes[j];
             }
             cluster->tb_capacity += job.tb_usage;
+            agent->jobs_completed++;
             memset(&agent->jobs[i], 0, sizeof(Job));
         }
+    }
+}
+
+void update_capacity_used(Arkhai* env) {
+    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
+        Agent* agent = env->agents + agent_idx;
+        if (agent->is_buyer) {
+            continue;
+        }
+
+        int total_gpus = 0;
+        int used_gpus = 0;
+        Cluster* cluster = &agent->cluster;
+        for (int i=0; i<NODE_TYPES; i++) {
+            total_gpus += cluster->nodes[i].total;
+            used_gpus += cluster->nodes[i].total - cluster->nodes[i].free;
+        }
+
+        if (total_gpus == 0) {
+            continue;
+        }
+        agent->capacity_used += used_gpus / ((float)total_gpus * env->episode_length);
     }
 }
 
@@ -579,6 +622,8 @@ void c_step(Arkhai* env) {
                 printf("\tJob Revenue: %f\n", agent->job_revenue);
                 printf("\tCompute Expense: %f\n", agent->compute_expense);
                 printf("\tFilled Jobs: %d\n", agent->filled_jobs);
+                printf("\tJobs Completed: %d\n", agent->jobs_completed);
+                printf("\tCapacity Used: %f\n", agent->capacity_used);
                 printf("\tEnergy Revenue: %f\n", agent->energy_revenue);
                 printf("\tEnergy Expense: %f\n", agent->energy_expense);
                 printf("\tEpisode Return: %f\n", agent->episode_return);
@@ -597,6 +642,8 @@ void c_step(Arkhai* env) {
             env->log.score += job_profit + energy_profit;
             env->log.episode_length += env->tick;
             env->log.episode_return += agent->episode_return;
+            env->log.jobs_completed += agent->jobs_completed;
+            env->log.capacity_used += agent->capacity_used;
             env->log.n++;
             env->terminals[agent_idx] = 1;
         }
@@ -693,6 +740,7 @@ void c_step(Arkhai* env) {
         return;
     }
 
+    update_capacity_used(env);
     env->tick++;
     clear_finished_jobs(env);
     buyer->request = generate_request(env);

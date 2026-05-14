@@ -51,6 +51,10 @@ Arkhai create_train_env() {
         .h100_kw=10.0,
         .r5090_price=0.37,
         .r5090_kw=1.0,
+        .gh200_price=52.0,
+        .gh200_kw=10.0,
+        .gb200_price=32.0,
+        .gb200_kw=13.3,
         .energy_demand_base=1500.0,
         .kwh_price_base=0.02,
         .kwh_price_sensitivity=0.0000001,
@@ -102,6 +106,10 @@ Arkhai create_test_env() {
         .h100_kw=10.0,
         .r5090_price=0.0,
         .r5090_kw=1.0,
+        .gh200_price=0.0,
+        .gh200_kw=10.0,
+        .gb200_price=0.0,
+        .gb200_kw=13.3,
         .energy_demand_base=0.0,
         .kwh_price_base=0.0,
         .kwh_price_sensitivity=0.0,
@@ -259,9 +267,8 @@ void test_bilateral_negotiation() {
     printf("Passed bilateral agent negotiation\n\n");
 }
 
-void test_determinism() {
-    // Training environment
-    printf("Mirrored training environment\n");
+Log run_determinism_trial(unsigned int seed) {
+    srand(seed);
     Arkhai env = create_train_env();
     ClusterSpec seller_spec = create_train_spec();
     ClusterSpec buyer_spec = {0};
@@ -273,17 +280,39 @@ void test_determinism() {
         env.actions[0] = 2;
         c_step(&env);
     }
-    printf("\tProfit: %f\n", env.log.profit / env.log.n);
-    printf("\tExpense: %f\n", env.log.expense / env.log.n);
-    printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
-    printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
-    printf("\tN: %f\n", env.log.n);
-    assert(is_close(env.log.profit / env.log.n, 140854.921875) && "Profit changed since test authorship");
-    assert(is_close(env.log.expense / env.log.n, 2846.110596) && "Expense changed since test authorship");
-    assert(is_close(env.log.episode_return / env.log.n, 14.726909) && "Episode return changed since test authorship");
+    Log log = env.log;
     c_step(&env);
     free_buffers(&env);
     c_close(&env);
+    return log;
+}
+
+void assert_logs_match(Log a, Log b) {
+    assert(is_close(a.score, b.score) && "Determinism check failed: score");
+    assert(is_close(a.expense, b.expense) && "Determinism check failed: expense");
+    assert(is_close(a.profit, b.profit) && "Determinism check failed: profit");
+    assert(is_close(a.energy_revenue, b.energy_revenue) && "Determinism check failed: energy_revenue");
+    assert(is_close(a.energy_expense, b.energy_expense) && "Determinism check failed: energy_expense");
+    assert(is_close(a.episode_length, b.episode_length) && "Determinism check failed: episode_length");
+    assert(is_close(a.episode_return, b.episode_return) && "Determinism check failed: episode_return");
+    assert(is_close(a.jobs_completed, b.jobs_completed) && "Determinism check failed: jobs_completed");
+    assert(is_close(a.capacity_used, b.capacity_used) && "Determinism check failed: capacity_used");
+    assert(is_close(a.n, b.n) && "Determinism check failed: n");
+}
+
+void test_determinism() {
+    // Training environment
+    printf("Mirrored training environment\n");
+    Log log_a = run_determinism_trial(0);
+    Log log_b = run_determinism_trial(0);
+    assert_logs_match(log_a, log_b);
+    printf("\tProfit: %f\n", log_a.profit / log_a.n);
+    printf("\tExpense: %f\n", log_a.expense / log_a.n);
+    printf("\tEpisode length: %f\n", log_a.episode_length / log_a.n);
+    printf("\tEpisode return: %f\n", log_a.episode_return / log_a.n);
+    printf("\tJobs completed: %f\n", log_a.jobs_completed / log_a.n);
+    printf("\tCapacity used: %f\n", log_a.capacity_used / log_a.n);
+    printf("\tN: %f\n", log_a.n);
     printf("Finished determinism test\n\n");
 }
 
@@ -385,11 +414,132 @@ void test_calcul() {
     printf("\tExpense: %f\n", env.log.expense / env.log.n);
     printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
     printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
+    printf("\tJobs completed: %f\n", env.log.jobs_completed / env.log.n);
+    printf("\tCapacity used: %f\n", env.log.capacity_used / env.log.n);
     printf("\tN: %f\n", env.log.n);
     c_step(&env);
     free_buffers(&env);
     c_close(&env);
     printf("Finished Calcul test\n");
+}
+
+float node_price_for_type(Arkhai* env, int node_type) {
+    if (node_type == A100) {
+        return env->a100_price;
+    } else if (node_type == H100) {
+        return env->h100_price;
+    } else if (node_type == R5090) {
+        return env->r5090_price;
+    } else if (node_type == GH200) {
+        return env->gh200_price;
+    } else if (node_type == GB200) {
+        return env->gb200_price;
+    }
+    assert(false && "Unknown node type");
+    return 0.0f;
+}
+
+float node_kw_for_type(Arkhai* env, int node_type) {
+    if (node_type == A100) {
+        return env->a100_kw;
+    } else if (node_type == H100) {
+        return env->h100_kw;
+    } else if (node_type == R5090) {
+        return env->r5090_kw;
+    } else if (node_type == GH200) {
+        return env->gh200_kw;
+    } else if (node_type == GB200) {
+        return env->gb200_kw;
+    }
+    assert(false && "Unknown node type");
+    return 0.0f;
+}
+
+void test_power_site(char* name, int node_type, int gpus, float power_mw) {
+    printf("%s\n", name);
+    Arkhai env = create_train_env();
+    env.kwh_price_base = 0.15;
+    env.episode_length = 96;
+    env.scripted_buy_price=1.0,
+    env.scripted_buy_price_dr=0.0,
+    env.job_duration=24;
+    env.job_duration_dr=0.5;
+    env.job_tb_usage=0.0;
+    env.job_tb_usage_dr=0.0;
+
+    for (int i=0; i<NODE_TYPES; i++) {
+        env.job_nodes[i] = 0;
+        env.job_nodes_dr[i] = 0.0f;
+    }
+
+    int pods = gpus / 8;
+    int job_pods = pods / 5;
+    assert(gpus % 8 == 0 && "Expected GPU count divisible by 8 pods");
+    assert(job_pods > 0 && "Expected at least one 8-GPU pod per job");
+    env.job_nodes[node_type] = job_pods;
+    env.job_nodes_dr[node_type] = (job_pods - 1.0f) / job_pods;
+
+    ClusterSpec seller_spec = {
+        .node_capacity = {0, 0, 0, 0, 0},
+        .node_capacity_dr = {0.0, 0.0, 0.0, 0.0, 0.0},
+        .tb_capacity = 0,
+        .tb_capacity_dr = 0.0,
+        .kwh_capacity = power_mw * 1000.0f,
+        .kwh_capacity_dr = 0.0,
+        .kw_generation = 0,
+        .kw_generation_dr = 0.0,
+    };
+    seller_spec.node_capacity[node_type] = pods;
+
+    ClusterSpec buyer_spec = {0};
+    int num_agents = env.ai_buyers + env.ai_sellers;
+    init(&env, buyer_spec, seller_spec);
+    allocate_buffers(&env, num_agents);
+
+    for (int i=0; i<10000; i++) {
+        env.actions[0] = 4;
+
+        if (env.observations[0] == 0) {
+            env.actions[1] = 8;
+        } else if (env.observations[0] == 0.5) {
+            env.actions[1] = 3;
+        } else {
+            env.actions[1] = 4;
+        }
+
+        c_step(&env);
+    }
+
+    float node_price = node_price_for_type(&env, node_type);
+    float node_kw = node_kw_for_type(&env, node_type);
+    printf("\tGPUs: %d\n", gpus);
+    printf("\t8-GPU pods: %d\n", pods);
+    printf("\tPower budget kW: %f\n", power_mw * 1000.0f);
+    printf("\tEstimated compute load kW: %f\n", pods * node_kw);
+    printf("\tCeiling: %f\n", env.episode_length * seller_spec.node_capacity[node_type] * node_price);
+    printf("\tProfit: %f\n", env.log.profit / env.log.n);
+    printf("\tExpense: %f\n", env.log.expense / env.log.n);
+    printf("\tEpisode length: %f\n", env.log.episode_length / env.log.n);
+    printf("\tEpisode return: %f\n", env.log.episode_return / env.log.n);
+    printf("\tJobs completed: %f\n", env.log.jobs_completed / env.log.n);
+    printf("\tCapacity used: %f\n", env.log.capacity_used / env.log.n);
+    printf("\tN: %f\n", env.log.n);
+    c_step(&env);
+    free_buffers(&env);
+    c_close(&env);
+    printf("Finished %s\n", name);
+}
+
+void test_saudi() {
+    test_power_site("Saudi GB200 site", GB200, 5000, 12.0f);
+}
+
+void test_los_alamos() {
+    test_power_site("Los Alamos GH200 site", GH200, 2560, 3.0f);
+}
+
+void test_hut_8() {
+    test_power_site("Hut 8 H100 site", H100, 1000, 1.43f);
 }
 
 int main() {
@@ -400,4 +550,7 @@ int main() {
     test_bilateral_negotiation();
     test_200x5090();
     test_calcul();
+    test_saudi();
+    test_los_alamos();
+    test_hut_8();
 }

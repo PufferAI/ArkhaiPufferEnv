@@ -13,9 +13,13 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->job_nodes[A100] = unpack(kwargs, "job_a100_nodes");
     env->job_nodes[H100] = unpack(kwargs, "job_h100_nodes");
     env->job_nodes[R5090] = unpack(kwargs, "job_r5090_nodes");
+    env->job_nodes[GH200] = unpack(kwargs, "job_gh200_nodes");
+    env->job_nodes[GB200] = unpack(kwargs, "job_gb200_nodes");
     env->job_nodes_dr[A100] = unpack(kwargs, "job_a100_nodes_dr");
     env->job_nodes_dr[H100] = unpack(kwargs, "job_h100_nodes_dr");
     env->job_nodes_dr[R5090] = unpack(kwargs, "job_r5090_nodes_dr");
+    env->job_nodes_dr[GH200] = unpack(kwargs, "job_gh200_nodes_dr");
+    env->job_nodes_dr[GB200] = unpack(kwargs, "job_gb200_nodes_dr");
     env->job_duration = unpack(kwargs, "job_duration");
     env->job_duration_dr = unpack(kwargs, "job_duration_dr");
     env->job_tb_usage = unpack(kwargs, "job_tb_usage");
@@ -34,6 +38,10 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
     env->h100_kw = unpack(kwargs, "h100_kw");
     env->r5090_price = unpack(kwargs, "r5090_price");
     env->r5090_kw = unpack(kwargs, "r5090_kw");
+    env->gh200_price = unpack(kwargs, "gh200_price");
+    env->gh200_kw = unpack(kwargs, "gh200_kw");
+    env->gb200_price = unpack(kwargs, "gb200_price");
+    env->gb200_kw = unpack(kwargs, "gb200_kw");
     env->energy_demand_base = unpack(kwargs, "energy_demand_base");
     env->kwh_price_base = unpack(kwargs, "kwh_price_base");
     env->kwh_price_sensitivity = unpack(kwargs, "kwh_price_sensitivity");
@@ -51,11 +59,15 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
             unpack(kwargs, "cluster_a100_capacity"),
             unpack(kwargs, "cluster_h100_capacity"),
             unpack(kwargs, "cluster_r5090_capacity"),
+            unpack(kwargs, "cluster_gh200_capacity"),
+            unpack(kwargs, "cluster_gb200_capacity"),
         },
         .node_capacity_dr = {
             unpack(kwargs, "cluster_a100_capacity_dr"),
             unpack(kwargs, "cluster_h100_capacity_dr"),
             unpack(kwargs, "cluster_r5090_capacity_dr"),
+            unpack(kwargs, "cluster_gh200_capacity_dr"),
+            unpack(kwargs, "cluster_gb200_capacity_dr"),
         },
         .tb_capacity = unpack(kwargs, "cluster_tb_capacity"),
         .tb_capacity_dr = unpack(kwargs, "cluster_tb_capacity_dr"),
@@ -77,5 +89,7 @@ static int my_log(PyObject* dict, Log* log) {
     assign_to_dict(dict, "energy_expense", log->energy_expense);
     assign_to_dict(dict, "episode_length", log->episode_length);
     assign_to_dict(dict, "episode_return", log->episode_return);
+    assign_to_dict(dict, "jobs_completed", log->jobs_completed);
+    assign_to_dict(dict, "capacity_used", log->capacity_used);
     return 0;
 }
