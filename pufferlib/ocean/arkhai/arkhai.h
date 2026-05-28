@@ -8,7 +8,7 @@
 
 #define MAX_JOBS 100
 
-#define NUM_OBS 29
+#define NUM_OBS 67
 #define NUM_ACT 2
 
 typedef struct {
@@ -162,6 +162,7 @@ typedef struct {
     int randomize_offset;
     int preset;
     int serving;
+    int serving_seller;
     bool debug;
 } Arkhai;
 
@@ -205,6 +206,8 @@ enum SIDE {
     BOTH,
 };
 
+bool can_accept_job(Arkhai* env, Agent* agent, Job* job);
+
 float randf(float min, float max) {
     return min + ((float)rand()/(float)(RAND_MAX))*(max-min);
 }
@@ -227,6 +230,7 @@ float kw_price(Arkhai* env, float t) {
 }
 
 void init_cluster(Cluster* cluster, ClusterSpec* spec) {
+    *cluster = (Cluster){0};
     cluster->kw_generation = randomized(spec->kw_generation, spec->kw_generation_dr);
     cluster->kwh_capacity = randomized(spec->kwh_capacity, spec->kwh_capacity_dr);
     cluster->tb_capacity = randomized(spec->tb_capacity, spec->tb_capacity_dr);
@@ -353,6 +357,24 @@ int select_buyer(Arkhai* env) {
     return idxs[idx_idx];
 }
 
+int select_seller(Arkhai* env, Job* request) {
+    int num_sellers = env->scripted_sellers + env->ai_sellers;
+    int idxs[num_sellers];
+    int i = 0;
+    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
+        Agent* agent = env->agents + agent_idx;
+        if (agent->is_buyer || !can_accept_job(env, agent, request)) {
+            continue;
+        }
+        idxs[i++] = agent_idx;
+    }
+
+    if (i == 0) {
+        return -1;
+    }
+    int idx_idx = rand()%i;
+    return idxs[idx_idx];
+}
 
 void sanity_check(Job job) {
     assert(job.tb_usage >= 0);
@@ -388,40 +410,82 @@ Job generate_request(Arkhai* env) {
     return job;
 }
 
+void write_agent_observations(Arkhai* env, Agent* agent, Job* request, bool full_info, int* i) {
+    Cluster* cluster = &agent->cluster;
+    if (full_info) {
+        for (int j=0; j<NODE_TYPES; j++) {
+            env->observations[(*i)++] = cluster->nodes[j].total / ((float)env->job_nodes[j] + 1);
+            env->observations[(*i)++] = cluster->nodes[j].free / ((float)env->job_nodes[j] + 1);
+        }
+        env->observations[(*i)++] = cluster->tb_usage / ((float)env->job_tb_usage + 1);
+        env->observations[(*i)++] = cluster->tb_capacity / ((float)env->job_tb_usage + 1);
+        // TODO: these should be divided by global capacities
+        env->observations[(*i)++] = cluster->kwh_storage / ((float)cluster->kwh_capacity + 1);
+        env->observations[(*i)++] = cluster->kwh_capacity / ((float)cluster->kwh_capacity + 1);
+        env->observations[(*i)++] = cluster->kw_generation / ((float)cluster->kwh_capacity + 1);
+    } else {
+        // Capacity and energy generation are private counterparty information.
+        for (int j=0; j<NODE_TYPES; j++) {
+            env->observations[(*i)++] = 0.0f;
+            env->observations[(*i)++] = 0.0f;
+        }
+        env->observations[(*i)++] = 0.0f;
+        env->observations[(*i)++] = 0.0f;
+        env->observations[(*i)++] = 0.0f;
+        env->observations[(*i)++] = 0.0f;
+        env->observations[(*i)++] = 0.0f;
+    }
+
+    // These fields are empty placeholders for now. Normalize them
+    // appropriately here once their actual ranges and semantics are set.
+    env->observations[(*i)++] = cluster->sla;
+    env->observations[(*i)++] = cluster->location;
+    env->observations[(*i)++] = cluster->uptime;
+    env->observations[(*i)++] = cluster->latency;
+    env->observations[(*i)++] = cluster->bandwidth;
+    env->observations[(*i)++] = cluster->reputation;
+
+    if (request != NULL) {
+        for (int j=0; j<NODE_TYPES; j++) {
+            env->observations[(*i)++] = request->nodes[j] / ((float)env->job_nodes[j] + 1);
+        }
+        env->observations[(*i)++] = request->tb_usage / ((float)env->job_tb_usage + 1);
+        env->observations[(*i)++] = request->start / ((float)env->job_duration + 1);
+        env->observations[(*i)++] = request->duration / ((float)env->job_duration + 1);
+        env->observations[(*i)++] = request->negotiations / ((float)env->request_timeout + 1);
+        env->observations[(*i)++] = request->price / (job_price(env, request) + 1);
+    } else {
+        for (int j=0; j<10; j++) {
+            env->observations[(*i)++] = 0.0f;
+        }
+    }
+
+    env->observations[(*i)++] = full_info ? agent->prev_reward : 0.0f;
+}
+
 void compute_observations(Arkhai* env) {
     int i = 0;
 
     // DO NOT ADD OR CHANGE INDEXING WITHOUT UPDATING BOTH BUYER AND SELLER CODE,
     // AS WELL AS THE OBS SIZE IN PYTHON. WE DO NOT HAVE A GOOD WAY TO AUTOMATICALLY
     // CHECK THIS. YOU WILL CAUSE SILENT MEMORY CORRUPTION OR SEGFAULTS.
-    Job* request = &env->agents[env->serving].request;
+    Agent* buyer = &env->agents[env->serving];
+    Agent* seller = env->serving_seller >= 0 ? &env->agents[env->serving_seller] : NULL;
+    Job* request = &buyer->request;
     int num_agents = env->ai_sellers + env->ai_buyers;
     for (int agent_idx=0; agent_idx<num_agents; agent_idx++) {
-        Agent* agent = env->agents + agent_idx;
-        Cluster* cluster = &agent->cluster;
-
         env->observations[i++] = (env->tick % 24) / 24.0f;
         env->observations[i++] = env->tick / (float)env->episode_length;
         env->observations[i++] = kw_price(env, env->tick);
-        for (int j=0; j<NODE_TYPES; j++) {
-            env->observations[i++] = cluster->nodes[j].total / ((float)env->job_nodes[j] + 1);
-            env->observations[i++] = cluster->nodes[j].free / ((float)env->job_nodes[j] + 1);
+
+        write_agent_observations(env, buyer, request, agent_idx == env->serving, &i);
+        if (seller != NULL) {
+            write_agent_observations(env, seller, NULL, agent_idx == env->serving_seller, &i);
+        } else {
+            for (int j=0; j<32; j++) {
+                env->observations[i++] = 0.0f;
+            }
         }
-        env->observations[i++] = cluster->tb_usage / ((float)env->job_tb_usage + 1);
-        env->observations[i++] = cluster->tb_capacity / ((float)env->job_tb_usage + 1);
-        // TODO: these should be divided by global capacities
-        env->observations[i++] = cluster->kwh_storage / ((float)cluster->kwh_capacity + 1);
-        env->observations[i++] = cluster->kwh_capacity / ((float)cluster->kwh_capacity + 1);
-        env->observations[i++] = cluster->kw_generation / ((float)cluster->kwh_capacity + 1);
-        for (int j=0; j<NODE_TYPES; j++) {
-            env->observations[i++] = request->nodes[j] / ((float)env->job_nodes[j] + 1);
-        }
-        env->observations[i++] = request->tb_usage / ((float)env->job_tb_usage + 1);
-        env->observations[i++] = request->start / ((float)env->job_duration + 1);
-        env->observations[i++] = request->duration / ((float)env->job_duration + 1);
-        env->observations[i++] = request->negotiations / ((float)env->request_timeout + 1);
-        env->observations[i++] = request->price / (job_price(env, request) + 1);
-        env->observations[i++] = agent->prev_reward;
     }
 }
 
@@ -452,6 +516,7 @@ void c_reset(Arkhai* env) {
         }
     }
     env->serving = select_buyer(env);
+    env->serving_seller = select_seller(env, &env->agents[env->serving].request);
     compute_observations(env);
 }
 
@@ -516,12 +581,16 @@ float seller_response(Arkhai* env, Job request, float offer_price) {
     return rng * job_price(env, &request);
 }
 
+float price_action_multiplier(int action) {
+    assert(action >= 1 && action <= 9);
+    // Action 0 is reject. Actions 1-9 map to the original +/- 20% buckets.
+    return 1.0f + ((float)action - 5.0f)/20.0f;
+}
+
 float calculate_price(float demand, float p0, float threshold, float c) {
     float excess = fmaxf(0.0f, demand - threshold);
     return p0 + c*powf(excess, 2.0f); // Quadratic for non-linear spike
 }
-
-
 
 // Clear/update fns will bottleneck perf eventually with enough agents/jobs
 // and we will have to do something smarter, but it is fast for now.
@@ -663,46 +732,37 @@ void c_step(Arkhai* env) {
     float request_price;
     if (buyer->is_heuristic) {
         request_price = buyer_response(env, *request, base_price);
+    } else if (env->actions[2*request_idx] == 0) {
+        request_price = 0.0f;
     } else {
         // I am discretizing the action space to +/- 20% of base price estimate in buckets of 5%
         // This does not need to be uniform, and we can adjust it for finer pricing. Not too
         // many buckets though.
         // -0.2 -0.15 -0.1 -0.05 0.0f 0.05 0.1 0.15 0.2
-        float price_mul = 1.0f + ((float)env->actions[2*request_idx] - 4.0f)/20.0f;
+        float price_mul = price_action_multiplier(env->actions[2*request_idx]);
         request_price = price_mul * base_price;
     }
 
-    // There can be multiple buyers, but sellers only make offers on one job at a time.
-    int best_idx = -1;
-    float best_response_price = FLT_MAX;
-    bool exists_valid_buyer = false; // We skip negotiation if nobody has capacity
-    Agent* seller;
-    for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {
-        if (agent_idx == request_idx) {
-            continue;
-        }
-        seller = &env->agents[agent_idx];
-        if (!can_accept_job(env, seller, request)) {
-            continue;
-        }
-        exists_valid_buyer = true;
-        float offer_price;
+    int seller_idx = env->serving_seller;
+    Agent* seller = seller_idx >= 0 ? &env->agents[seller_idx] : NULL;
+    bool exists_valid_seller = seller != NULL && can_accept_job(env, seller, request);
+    float seller_offer_price = FLT_MAX;
+    if (exists_valid_seller) {
         if (seller->is_heuristic) {
-            offer_price = seller_response(env, *request, base_price);
+            seller_offer_price = seller_response(env, *request, base_price);
+        } else if (env->actions[2*seller_idx] == 0) {
+            seller_offer_price = FLT_MAX;
         } else {
-            float price_mul = 1.0f + ((float)env->actions[2*agent_idx] - 4.0f)/20.0f;
-            offer_price = price_mul * base_price;
-        }
-        if (offer_price <= best_response_price) {
-            best_idx = agent_idx;
-            best_response_price = offer_price;
+            float price_mul = price_action_multiplier(env->actions[2*seller_idx]);
+            seller_offer_price = price_mul * base_price;
         }
     }
-    if (!exists_valid_buyer) {
+
+    if (!exists_valid_seller) {
         // Skip negotiation
-    } else if (best_response_price <= request_price) {
-        // The best seller offer wins the job
-        accept_job(env, request, best_idx);
+    } else if (seller_offer_price <= request_price) {
+        // The selected seller wins the job
+        accept_job(env, request, seller_idx);
 
         // Full duration used for reward. Clipped duration used for logs.
         // This prevents the agent from exploiting terminal bounds...
@@ -716,7 +776,7 @@ void c_step(Arkhai* env) {
         }
 
         float buyer_revenue = job_price(env, request);
-        float buyer_expense = best_response_price;
+        float buyer_expense = seller_offer_price;
         buyer->job_revenue += buyer_revenue*clipped_duration;
         buyer->compute_expense += buyer_expense*clipped_duration;
         buyer->filled_jobs++;
@@ -724,8 +784,7 @@ void c_step(Arkhai* env) {
             buyer->profit_this_tick += (buyer_revenue - buyer_expense)*duration;
         }
 
-        seller = &env->agents[best_idx];
-        float seller_revenue = best_response_price;
+        float seller_revenue = seller_offer_price;
         seller->job_revenue += seller_revenue*clipped_duration;
         //printf("recognizing seller revenue %f\n", seller_revenue*clipped_duration);
         // Energy is recognized as it is incurred.
@@ -734,7 +793,6 @@ void c_step(Arkhai* env) {
         if (!seller->is_heuristic) {
             seller->profit_this_tick += seller_revenue*duration;
         }
-        buyer->request = generate_request(env);
     } else if (request->negotiations < env->request_timeout) {
         compute_observations(env);
         return;
@@ -744,6 +802,7 @@ void c_step(Arkhai* env) {
     env->tick++;
     clear_finished_jobs(env);
     buyer->request = generate_request(env);
+    env->serving_seller = select_seller(env, &buyer->request);
 
     // Assume energy over capacity is sold at the current market price
     for (int agent_idx=0; agent_idx<env->num_agents; agent_idx++) {

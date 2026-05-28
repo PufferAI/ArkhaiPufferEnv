@@ -10,11 +10,17 @@ from pufferlib.ocean.arkhai import binding
 # Let me know if you'd rather have them duplicated explicitly.
 class Arkhai(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, buf=None, seed=0, **kwargs):
+        # Note: These bounds are legacy from gymnasium and not actually
+        # enforced because there is no way to do that check efficiently. 
+        # This entire Python wrapper and gymnasium dependence are removed
+        # in PufferLib 4.0.
         self.single_observation_space = gymnasium.spaces.Box(low=0, high=1,
-            shape=(29,), dtype=np.float32)
-        self.single_action_space = gymnasium.spaces.MultiDiscrete([9, 9])
+            shape=(67,), dtype=np.float32)
+        self.single_action_space = gymnasium.spaces.MultiDiscrete([10, 9])
         self.render_mode = render_mode
-        self.num_agents = num_envs
+        ai_buyers = kwargs['ai_buyers']
+        ai_sellers = kwargs['ai_sellers']
+        self.num_agents = num_envs * (ai_buyers + ai_sellers)
         self.log_interval = log_interval
 
         super().__init__(buf)

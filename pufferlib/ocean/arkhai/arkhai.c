@@ -244,16 +244,16 @@ void test_bilateral_negotiation() {
     for (int i=0; i<2*env.episode_length; i++){
         int tick_before = env.tick;
         if (i%2 == 0) {
-            env.actions[0] = 4; // Seller offers midpoint
-            env.actions[2] = 2; // Buyer offers very low
+            env.actions[0] = 5; // Seller offers midpoint
+            env.actions[2] = 3; // Buyer offers very low
             c_step(&env);
             // Negotiation can fail due to lack of resources on later ticks
             if (i == 0) {
                 assert(env.tick == tick_before && "tick advanced on failed negotiation");
             }
         } else {
-            env.actions[0] = 3; // Seller offers discount
-            env.actions[2] = 3; // Buyer matches
+            env.actions[0] = 4; // Seller offers discount
+            env.actions[2] = 4; // Buyer matches
             c_step(&env);
             assert(env.tick != tick_before && "tick did not advance on completed negotiation");
         }
@@ -277,7 +277,7 @@ Log run_determinism_trial(unsigned int seed) {
     allocate_buffers(&env, num_agents);
     c_reset(&env);
     for (int i=0; i<100000; i++) {
-        env.actions[0] = 2;
+        env.actions[0] = 3;
         c_step(&env);
     }
     Log log = env.log;
@@ -348,7 +348,7 @@ void test_200x5090() {
     c_reset(&env);
 
     while (env.terminals[0] == 0) {
-        env.actions[0] = 4;
+        env.actions[0] = 5;
         c_step(&env);
     }
     printf("\tProfit: %f\n", env.log.profit / env.log.n);
@@ -395,9 +395,10 @@ void test_calcul() {
     int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
     allocate_buffers(&env, num_agents);
+    c_reset(&env);
 
     for (int i=0; i<10000; i++) {
-        env.actions[0] = 4;
+        env.actions[0] = 5;
 
         if (env.observations[0] == 0) {
             env.actions[1] = 8;
@@ -495,9 +496,10 @@ void test_power_site(char* name, int node_type, int gpus, float power_mw) {
     int num_agents = env.ai_buyers + env.ai_sellers;
     init(&env, buyer_spec, seller_spec);
     allocate_buffers(&env, num_agents);
+    c_reset(&env);
 
     for (int i=0; i<10000; i++) {
-        env.actions[0] = 4;
+        env.actions[0] = 5;
 
         if (env.observations[0] == 0) {
             env.actions[1] = 8;
