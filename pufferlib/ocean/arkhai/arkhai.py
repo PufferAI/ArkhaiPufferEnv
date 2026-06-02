@@ -18,15 +18,29 @@ class Arkhai(pufferlib.PufferEnv):
             shape=(67,), dtype=np.float32)
         self.single_action_space = gymnasium.spaces.MultiDiscrete([10, 9])
         self.render_mode = render_mode
+        self.log_interval = log_interval
         ai_buyers = kwargs['ai_buyers']
         ai_sellers = kwargs['ai_sellers']
-        self.num_agents = num_envs * (ai_buyers + ai_sellers)
-        self.log_interval = log_interval
+        agents_per_env = ai_buyers + ai_sellers
+        if agents_per_env < 1:
+            raise pufferlib.APIUsageError(
+                'Arkhai requires at least one AI buyer or seller')
+        self.num_agents = num_envs * agents_per_env
 
         super().__init__(buf)
-        self.c_envs = binding.vec_init(self.observations, self.actions, self.rewards,
-            self.terminals, self.truncations, num_envs, seed, **kwargs)
+        c_envs = []
+        for i in range(num_envs):
+            offset = i * agents_per_env
+            c_env = binding.env_init(
+                self.observations[offset:offset + agents_per_env],
+                self.actions[offset:offset + agents_per_env],
+                self.rewards[offset:offset + agents_per_env],
+                self.terminals[offset:offset + agents_per_env],
+                self.truncations[offset:offset + agents_per_env],
+                i + seed*num_envs, **kwargs)
+            c_envs.append(c_env)
 
+        self.c_envs = binding.vectorize(*c_envs)
         self.tick = 0
  
     def reset(self, seed=0):
